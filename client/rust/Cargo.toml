@@ -1,0 +1,48 @@
+[package]
+name = "mls-chat-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# OpenMLS and crypto (note: full OpenMLS integration deferred to presentation layer)
+# For now using basic crypto and placeholder MLS service
+
+# Database
+rusqlite = { version = "0.37", features = ["bundled", "chrono"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async runtime
+tokio = { version = "1.48", features = ["full"] }
+tokio-tungstenite = "0.28"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# IDs
+uuid = { version = "1.18", features = ["v4", "serde"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# CLI utilities
+clap = { version = "4.5", features = ["derive"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.14"
+mockall = "0.12"
+
+[[bin]]
+name = "mls-chat"
+path = "src/main.rs"
