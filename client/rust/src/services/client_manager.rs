@@ -8,15 +8,15 @@ use crate::services::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub struct ClientManager {
     user: Option<User>,
     storage: Arc<StorageService>,
     server_client: Arc<ServerClient>,
     mls_service: Arc<MlsService>,
-    group_service: Arc<Mutex<GroupService>>,
+    group_service: Arc<GroupService>,
     message_service: Arc<MessageService>,
+    current_group: Option<GroupId>,
 }
 
 impl ClientManager {
@@ -33,15 +33,17 @@ impl ClientManager {
         // Create services
         let server_client = Arc::new(ServerClient::new(server_url));
         let mls_service = Arc::new(MlsService::new());
+        let group_service = Arc::new(GroupService::new(
+            storage.clone(),
+            mls_service.clone(),
+            server_client.clone(),
+        ));
         let message_service = Arc::new(MessageService::new(
             storage.clone(),
             server_client.clone(),
             mls_service.clone(),
+            group_service.clone(),
         ));
-        let group_service = Arc::new(Mutex::new(GroupService::new(
-            storage.clone(),
-            mls_service.clone(),
-        )));
 
         // Try to load existing user, or create placeholder for new user
         let user = storage.get_user(&username)?;
@@ -62,9 +64,30 @@ impl ClientManager {
             mls_service,
             group_service,
             message_service,
+            current_group: None,
         };
 
         Ok(manager)
+    }
+
+    /// Start WebSocket connection
+    pub async fn start_websocket(&self, username: &str) -> Result<()> {
+        self.server_client.start_websocket(username.to_string()).await
+    }
+
+    /// Stop WebSocket connection
+    pub async fn stop_websocket(&self) -> Result<()> {
+        self.server_client.stop_websocket().await
+    }
+
+    /// Manually reconnect WebSocket
+    pub async fn ws_reconnect(&self) -> Result<()> {
+        self.server_client.ws_reconnect().await
+    }
+
+    /// Check if WebSocket is connected
+    pub async fn ws_is_connected(&self) -> bool {
+        self.server_client.ws_is_connected().await
     }
 
     /// Register a new user
@@ -126,34 +149,35 @@ impl ClientManager {
     }
 
     /// Create a new group
-    pub async fn create_group(&self, group_name: String) -> Result<GroupId> {
-        let mut gs = self.group_service.lock().await;
-        gs.create_group(group_name).await
+    pub async fn create_group(&mut self, group_name: String) -> Result<GroupId> {
+        let group_id = self.group_service.create_group(group_name).await?;
+        self.current_group = Some(group_id.clone());
+        Ok(group_id)
     }
 
     /// List all groups
     pub async fn list_groups(&self) -> Result<Vec<Group>> {
-        let gs = self.group_service.lock().await;
-        gs.list_groups().await
+        self.group_service.list_groups().await
     }
 
     /// Select the current group
-    pub async fn select_group(&self, group_id: GroupId) -> Result<()> {
-        let mut gs = self.group_service.lock().await;
-        gs.select_group(group_id).await
+    pub async fn select_group(&mut self, group_id: GroupId) -> Result<()> {
+        self.group_service.select_group(group_id.clone()).await?;
+        self.current_group = Some(group_id);
+        Ok(())
     }
 
     /// Get the currently selected group
-    pub async fn get_current_group(&self) -> Result<GroupId> {
-        let gs = self.group_service.lock().await;
-        gs.get_current_group()
+    pub fn get_current_group(&self) -> Result<GroupId> {
+        self.current_group
+            .clone()
+            .ok_or_else(|| ClientError::StateError("No group selected".to_string()))
     }
 
     /// Send a message to the current group
     pub async fn send_message(&self, content: String) -> Result<()> {
         let current_user = self.get_current_user()?;
-        let gs = self.group_service.lock().await;
-        let group_id = gs.get_current_group()?;
+        let group_id = self.get_current_group()?;
 
         self.message_service
             .send_message(group_id, current_user.username.clone(), content)
@@ -162,36 +186,36 @@ impl ClientManager {
 
     /// Get message history for current group
     pub async fn get_messages(&self, limit: usize) -> Result<Vec<Message>> {
-        let gs = self.group_service.lock().await;
-        let group_id = gs.get_current_group()?;
-
+        let group_id = self.get_current_group()?;
         self.message_service.get_group_messages(group_id, limit).await
     }
 
     /// Invite a user to the current group
     pub async fn invite_user(&self, username: String) -> Result<()> {
-        let mut gs = self.group_service.lock().await;
-        let group_id = gs.get_current_group()?;
-
-        gs.invite_user(username, group_id).await
+        let group_id = self.get_current_group()?;
+        self.group_service.invite_user(username, group_id).await
     }
 
     /// Accept an invitation
-    pub async fn accept_invitation(&self, group_id: GroupId) -> Result<()> {
-        let mut gs = self.group_service.lock().await;
-        gs.accept_invitation(group_id).await
+    pub async fn accept_invitation(&mut self, group_id: GroupId) -> Result<()> {
+        self.group_service.accept_invitation(group_id.clone()).await?;
+        self.current_group = Some(group_id);
+        Ok(())
     }
 
     /// Decline an invitation
     pub async fn decline_invitation(&self, group_id: GroupId) -> Result<()> {
-        let gs = self.group_service.lock().await;
-        gs.decline_invitation(group_id).await
+        self.group_service.decline_invitation(group_id).await
     }
 
     /// Leave a group
-    pub async fn leave_group(&self, group_id: GroupId) -> Result<()> {
-        let mut gs = self.group_service.lock().await;
-        gs.leave_group(group_id).await
+    pub async fn leave_group(&mut self, group_id: GroupId) -> Result<()> {
+        self.group_service.leave_group(group_id.clone()).await?;
+        // Clear current_group if leaving the current group
+        if self.current_group.as_ref() == Some(&group_id) {
+            self.current_group = None;
+        }
+        Ok(())
     }
 
     /// Graceful shutdown
@@ -205,17 +229,13 @@ impl ClientManager {
 
     /// Poll for new messages
     pub async fn poll_messages(&self) -> Result<Vec<Message>> {
-        let gs = self.group_service.lock().await;
-        let group_id = gs.get_current_group()?;
-
+        let group_id = self.get_current_group()?;
         self.message_service.poll_messages(group_id).await
     }
 
     /// Search messages
     pub async fn search_messages(&self, query: String, limit: usize) -> Result<Vec<Message>> {
-        let gs = self.group_service.lock().await;
-        let group_id = gs.get_current_group()?;
-
+        let group_id = self.get_current_group()?;
         self.message_service
             .search_messages(group_id, query, limit)
             .await

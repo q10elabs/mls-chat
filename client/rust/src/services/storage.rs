@@ -5,7 +5,7 @@ use crate::error::{ClientError, Result};
 use crate::models::{Group, GroupId, Message, MessageId, User, UserId};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 pub struct StorageService {
@@ -73,6 +73,7 @@ impl StorageService {
                 username TEXT NOT NULL,
                 public_key TEXT NOT NULL,
                 role TEXT NOT NULL,
+                status TEXT NOT NULL,
                 joined_at TEXT NOT NULL,
                 FOREIGN KEY(group_id) REFERENCES groups(id),
                 UNIQUE(group_id, username)
@@ -170,16 +171,23 @@ impl StorageService {
         )
         .map_err(|e| ClientError::StorageError(format!("Failed to save group: {}", e)))?;
 
-        // Save members
-        for member in &group.members {
+        db.execute("DELETE FROM members WHERE group_id = ?", params![group.id.to_string()])
+            .map_err(|e| ClientError::StorageError(format!("Failed to clear members: {}", e)))?;
+
+        for member in group
+            .members
+            .iter()
+            .chain(group.pending_members.iter())
+        {
             db.execute(
-                "INSERT OR REPLACE INTO members (group_id, username, public_key, role, joined_at)
-                 VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO members (group_id, username, public_key, role, status, joined_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
                 params![
                     group.id.to_string(),
                     &member.username,
                     &member.public_key,
                     format!("{:?}", member.role),
+                    format!("{:?}", member.status),
                     member.joined_at.to_rfc3339(),
                 ],
             )
@@ -201,12 +209,13 @@ impl StorageService {
             )
             .map_err(|e| ClientError::StorageError(format!("Failed to prepare statement: {}", e)))?;
 
-        let group_opt = stmt
+        let mut group_opt = stmt
             .query_row(params![group_id.to_string()], |row| {
                 Ok(Group {
                     id: GroupId::from_string(&row.get::<_, String>(0)?),
                     name: row.get(1)?,
-                    members: Vec::new(), // Will be loaded separately
+                    members: Vec::new(),
+                    pending_members: Vec::new(),
                     mls_state: row.get(2)?,
                     user_role: parse_member_role(&row.get::<_, String>(3)?),
                     created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
@@ -217,10 +226,39 @@ impl StorageService {
             .optional()
             .map_err(|e| ClientError::StorageError(format!("Failed to query group: {}", e)))?;
 
-        if let Some(mut group) = group_opt {
-            // Load members
-            let members = self.get_group_members(group_id)?;
-            group.members = members;
+        if let Some(mut group) = group_opt.take() {
+            let mut member_stmt = db
+                .prepare(
+                    "SELECT username, public_key, role, status, joined_at FROM members WHERE group_id = ? ORDER BY joined_at",
+                )
+                .map_err(|e| ClientError::StorageError(format!("Failed to prepare member query: {}", e)))?;
+
+            let members_iter = member_stmt
+                .query_map(params![group.id.to_string()], |row| {
+                    let status_str: String = row.get(3)?;
+                    let joined_at_str: String = row.get(4)?;
+                    Ok(crate::models::Member {
+                        username: row.get(0)?,
+                        public_key: row.get(1)?,
+                        role: parse_member_role(&row.get::<_, String>(2)?),
+                        status: parse_member_status(&status_str),
+                        joined_at: chrono::DateTime::parse_from_rfc3339(&joined_at_str)
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .unwrap_or_else(|_| Utc::now()),
+                    })
+                })
+                .map_err(|e| ClientError::StorageError(format!("Failed to query members: {}", e)))?;
+
+            for member in members_iter {
+                let member = member
+                    .map_err(|e| ClientError::StorageError(format!("Failed to collect member: {}", e)))?;
+                if member.status == crate::models::MemberStatus::Pending {
+                    group.pending_members.push(member);
+                } else {
+                    group.members.push(member);
+                }
+            }
+
             Ok(Some(group))
         } else {
             Ok(None)
@@ -243,6 +281,7 @@ impl StorageService {
                     id: GroupId::from_string(&row.get::<_, String>(0)?),
                     name: row.get(1)?,
                     members: Vec::new(),
+                    pending_members: Vec::new(),
                     mls_state: row.get(2)?,
                     user_role: parse_member_role(&row.get::<_, String>(3)?),
                     created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
@@ -254,14 +293,7 @@ impl StorageService {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| ClientError::StorageError(format!("Failed to collect groups: {}", e)));
 
-        let mut groups_with_members = Vec::new();
-        for mut group in groups? {
-            let members = self.get_group_members(group.id)?;
-            group.members = members;
-            groups_with_members.push(group);
-        }
-
-        Ok(groups_with_members)
+        groups
     }
 
     fn get_group_members(&self, group_id: GroupId) -> Result<Vec<crate::models::Member>> {
@@ -272,17 +304,20 @@ impl StorageService {
 
         let mut stmt = db
             .prepare(
-                "SELECT username, public_key, role, joined_at FROM members WHERE group_id = ? ORDER BY joined_at",
+                "SELECT username, public_key, role, status, joined_at FROM members WHERE group_id = ? AND status = ? ORDER BY joined_at",
             )
             .map_err(|e| ClientError::StorageError(format!("Failed to prepare statement: {}", e)))?;
 
         let members: Result<Vec<crate::models::Member>> = stmt
-            .query_map(params![group_id.to_string()], |row| {
+            .query_map(params![group_id.to_string(), "Active"], |row| {
+                let status_str: String = row.get(3)?;
+                let joined_at_str: String = row.get(4)?;
                 Ok(crate::models::Member {
                     username: row.get(0)?,
                     public_key: row.get(1)?,
                     role: parse_member_role(&row.get::<_, String>(2)?),
-                    joined_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
+                    status: parse_member_status(&status_str),
+                    joined_at: chrono::DateTime::parse_from_rfc3339(&joined_at_str)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
                 })
@@ -377,6 +412,13 @@ fn parse_member_role(role_str: &str) -> crate::models::MemberRole {
         "Moderator" => crate::models::MemberRole::Moderator,
         "Admin" => crate::models::MemberRole::Admin,
         _ => crate::models::MemberRole::Member,
+    }
+}
+
+fn parse_member_status(status_str: &str) -> crate::models::MemberStatus {
+    match status_str {
+        "Pending" => crate::models::MemberStatus::Pending,
+        _ => crate::models::MemberStatus::Active,
     }
 }
 

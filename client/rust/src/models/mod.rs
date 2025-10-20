@@ -6,12 +6,37 @@ pub mod group;
 pub mod message;
 
 pub use user::{User, UserId};
-pub use group::{Group, GroupId, Member, MemberRole};
+pub use group::{Group, GroupId, Member, MemberRole, MemberStatus};
 pub use message::{Message, MessageId};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Control message types for group administration
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ControlMessageType {
+    Kick,
+    ModAdd,
+    ModRemove,
+}
+
+/// Control message for admin operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlMessage {
+    pub msg_type: ControlMessageType,
+    pub target_user: String,
+    pub reason: Option<String>,
+}
+
+/// Pending invitation for a user to join a group
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingInvitation {
+    pub group_id: GroupId,
+    pub group_name: String,
+    pub inviter: String,
+    pub created_at: DateTime<Utc>,
+}
 
 /// Universally unique identifier wrapper
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -99,5 +124,52 @@ mod tests {
 
         assert_eq!(deserialized.group_id, "group_123");
         assert_eq!(deserialized.sender, "alice");
+    }
+
+    #[test]
+    fn test_control_message_kick_serialization() {
+        let msg = ControlMessage {
+            msg_type: ControlMessageType::Kick,
+            target_user: "bob".to_string(),
+            reason: Some("spam".to_string()),
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ControlMessage = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.msg_type, ControlMessageType::Kick);
+        assert_eq!(deserialized.target_user, "bob");
+        assert_eq!(deserialized.reason, Some("spam".to_string()));
+    }
+
+    #[test]
+    fn test_control_message_mod_add_serialization() {
+        let msg = ControlMessage {
+            msg_type: ControlMessageType::ModAdd,
+            target_user: "alice".to_string(),
+            reason: None,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ControlMessage = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.msg_type, ControlMessageType::ModAdd);
+        assert_eq!(deserialized.target_user, "alice");
+    }
+
+    #[test]
+    fn test_pending_invitation_serialization() {
+        let inv = PendingInvitation {
+            group_id: GroupId::new(),
+            group_name: "developers".to_string(),
+            inviter: "alice".to_string(),
+            created_at: Utc::now(),
+        };
+
+        let json = serde_json::to_string(&inv).unwrap();
+        let deserialized: PendingInvitation = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.group_name, "developers");
+        assert_eq!(deserialized.inviter, "alice");
     }
 }

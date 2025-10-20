@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# OpenMLS and crypto (note: full OpenMLS integration deferred to presentation layer)
-# For now using basic crypto and placeholder MLS service
+# OpenMLS and crypto
+openmls = "0.4.1"
+openmls_basic_credential = "0.4.1"
+openmls_rust_crypto = "0.4.1"
+x25519-dalek = "2.0"
+rand = "0.8"
 
 # Database
 rusqlite = { version = "0.37", features = ["bundled", "chrono"] }
@@ -17,6 +21,7 @@ serde_json = "1.0"
 # Async runtime
 tokio = { version = "1.48", features = ["full"] }
 tokio-tungstenite = "0.28"
+futures-util = "0.3"
 
 # HTTP client
 reqwest = { version = "0.11", features = ["json"] }
@@ -42,6 +47,9 @@ clap = { version = "4.5", features = ["derive"] }
 tokio-test = "0.4"
 tempfile = "3.14"
 mockall = "0.12"
+mls-chat-server = { path = "../../server" }
+actix-web = "4.11"
+actix = "0.13"
 
 [[bin]]
 name = "mls-chat"

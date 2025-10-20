@@ -3,12 +3,14 @@
 
 use crate::error::{ClientError, Result};
 use crate::models::{MessagePayload, RegisterUserRequest, UserKeyResponse};
+use crate::services::WebSocketManager;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub struct ServerClient {
     base_url: String,
     client: reqwest::Client,
+    ws_manager: Arc<Mutex<Option<WebSocketManager>>>,
 }
 
 impl ServerClient {
@@ -16,6 +18,7 @@ impl ServerClient {
         ServerClient {
             base_url: server_url,
             client: reqwest::Client::new(),
+            ws_manager: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -187,6 +190,82 @@ impl ServerClient {
             .ok_or_else(|| ClientError::ServerError("Invalid backup format".to_string()))?;
 
         Ok(Some(encrypted_state))
+    }
+
+    /// Start WebSocket connection for a user
+    pub async fn start_websocket(&self, username: String) -> Result<()> {
+        let manager = WebSocketManager::new(self.base_url.clone(), username);
+        manager.start().await?;
+        self.ws_manager.lock().await.replace(manager);
+        Ok(())
+    }
+
+    /// Stop WebSocket connection
+    pub async fn stop_websocket(&self) -> Result<()> {
+        if let Some(manager) = self.ws_manager.lock().await.take() {
+            manager.stop().await?;
+        }
+        Ok(())
+    }
+
+    /// Subscribe to a group via WebSocket
+    pub async fn ws_subscribe_group(&self, group_id: &str) -> Result<()> {
+        let ws_lock = self.ws_manager.lock().await;
+        if let Some(manager) = ws_lock.as_ref() {
+            manager.subscribe_group(group_id).await
+        } else {
+            Err(ClientError::StateError(
+                "WebSocket not connected".to_string(),
+            ))
+        }
+    }
+
+    /// Unsubscribe from a group via WebSocket
+    pub async fn ws_unsubscribe_group(&self, group_id: &str) -> Result<()> {
+        let ws_lock = self.ws_manager.lock().await;
+        if let Some(manager) = ws_lock.as_ref() {
+            manager.unsubscribe_group(group_id).await
+        } else {
+            Err(ClientError::StateError(
+                "WebSocket not connected".to_string(),
+            ))
+        }
+    }
+
+    /// Send a message via WebSocket
+    pub async fn ws_send_message(
+        &self,
+        group_id: &str,
+        encrypted_content: &str,
+    ) -> Result<()> {
+        let ws_lock = self.ws_manager.lock().await;
+        if let Some(manager) = ws_lock.as_ref() {
+            manager.send_message(group_id, encrypted_content).await
+        } else {
+            Err(ClientError::StateError(
+                "WebSocket not connected".to_string(),
+            ))
+        }
+    }
+
+    /// Check if WebSocket is connected
+    pub async fn ws_is_connected(&self) -> bool {
+        if let Some(manager) = self.ws_manager.lock().await.as_ref() {
+            manager.is_connected().await
+        } else {
+            false
+        }
+    }
+
+    /// Manually reconnect WebSocket
+    pub async fn ws_reconnect(&self) -> Result<()> {
+        if let Some(manager) = self.ws_manager.lock().await.as_ref() {
+            manager.reconnect().await
+        } else {
+            Err(ClientError::StateError(
+                "WebSocket not initialized".to_string(),
+            ))
+        }
     }
 }
 

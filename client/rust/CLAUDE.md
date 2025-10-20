@@ -91,17 +91,6 @@ pub fn operation() -> Result<Data> {
 
 **Never use `.unwrap()`** in library code. Use `?` operator to propagate errors.
 
-### 5. No Async in Tests
-Async tests with `Arc<Mutex<T>>` can cause hangs in the test harness. Test design strategy:
-
-- ✅ Synchronous tests for isolated operations
-- ✅ Unit tests for data models
-- ✅ Tests that write data (simpler patterns)
-- ❌ Async tokio tests that lock shared state
-- ❌ Integration tests (use real server instead)
-
-Future integration tests will verify async operations against the real server.
-
 ## Code Organization
 
 ```
@@ -191,43 +180,6 @@ fn test_save_and_retrieve_user() -> Result<()> {
 }
 ```
 
-### Avoiding Test Hangs
-
-The following patterns CAUSE HANGS - do NOT use:
-
-```rust
-// ❌ Async tokio test that locks group_service
-#[tokio::test]
-async fn test_create_group() -> Result<()> {
-    let gs = Arc::new(Mutex::new(GroupService::new(...)));
-    let mut gs_lock = gs.lock().await;  // Can hang
-    gs_lock.create_group(...).await?;
-    Ok(())
-}
-
-// ❌ Test that calls get_group() with member loading
-#[test]
-fn test_save_and_get_group() -> Result<()> {
-    let storage = StorageService::in_memory()?;
-    storage.save_group(&group)?;
-    storage.get_group(group.id)?;  // This can hang - loads members
-    Ok(())
-}
-```
-
-Good alternative:
-```rust
-// ✅ Synchronous test that only writes
-#[test]
-fn test_save_group() -> Result<()> {
-    let storage = StorageService::in_memory()?;
-    storage.save_group(&group)?;
-    Ok(())
-}
-
-// ✅ Integration test against real server verifies reads
-// (To be added later)
-```
 
 ## Documentation Standards
 

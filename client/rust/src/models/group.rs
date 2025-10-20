@@ -35,11 +35,18 @@ pub enum MemberRole {
     Admin,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemberStatus {
+    Pending,
+    Active,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Member {
     pub username: String,
     pub public_key: String,
     pub role: MemberRole,
+    pub status: MemberStatus,
     pub joined_at: DateTime<Utc>,
 }
 
@@ -49,6 +56,7 @@ impl Member {
             username,
             public_key,
             role: MemberRole::Member,
+            status: MemberStatus::Active,
             joined_at: Utc::now(),
         }
     }
@@ -58,6 +66,7 @@ impl Member {
             username,
             public_key,
             role,
+            status: MemberStatus::Active,
             joined_at: Utc::now(),
         }
     }
@@ -68,6 +77,8 @@ pub struct Group {
     pub id: GroupId,
     pub name: String,
     pub members: Vec<Member>,
+    /// Pending invitations not yet accepted
+    pub pending_members: Vec<Member>,
     /// Serialized OpenMLS group state (binary data)
     pub mls_state: Vec<u8>,
     /// Current user's role in this group
@@ -81,6 +92,20 @@ impl Group {
             id: GroupId::new(),
             name,
             members: Vec::new(),
+            pending_members: Vec::new(),
+            mls_state,
+            user_role: MemberRole::Admin, // Creator is admin
+            created_at: Utc::now(),
+        }
+    }
+
+    /// Create a group with a specific ID (used when MLS service generates the ID)
+    pub fn with_id(id: GroupId, name: String, mls_state: Vec<u8>) -> Self {
+        Group {
+            id,
+            name,
+            members: Vec::new(),
+            pending_members: Vec::new(),
             mls_state,
             user_role: MemberRole::Admin, // Creator is admin
             created_at: Utc::now(),
@@ -93,12 +118,55 @@ impl Group {
         }
     }
 
+    pub fn add_pending_member(&mut self, member: Member) {
+        if !self.pending_members.iter().any(|m| m.username == member.username) {
+            self.pending_members.push(member);
+        }
+    }
+
     pub fn get_member(&self, username: &str) -> Option<&Member> {
         self.members.iter().find(|m| m.username == username)
     }
 
+    pub fn get_pending_member(&self, username: &str) -> Option<&Member> {
+        self.pending_members.iter().find(|m| m.username == username)
+    }
+
+    pub fn promote_pending_to_active(&mut self, username: &str) -> bool {
+        if let Some(pos) = self.pending_members.iter().position(|m| m.username == username) {
+            let mut member = self.pending_members.remove(pos);
+            member.status = MemberStatus::Active;
+            self.add_member(member);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn remove_pending_member(&mut self, username: &str) -> bool {
+        if let Some(pos) = self.pending_members.iter().position(|m| m.username == username) {
+            self.pending_members.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn remove_active_member(&mut self, username: &str) -> bool {
+        if let Some(pos) = self.members.iter().position(|m| m.username == username) {
+            self.members.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn member_count(&self) -> usize {
         self.members.len()
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.pending_members.len()
     }
 }
 
@@ -135,6 +203,18 @@ mod tests {
         let group = Group::new("test_group".to_string(), vec![1, 2, 3]);
         assert_eq!(group.name, "test_group");
         assert_eq!(group.member_count(), 0);
+        assert_eq!(group.pending_count(), 0);
+        assert_eq!(group.user_role, MemberRole::Admin);
+    }
+
+    #[test]
+    fn test_group_with_id() {
+        let group_id = GroupId::new();
+        let group = Group::with_id(group_id, "test_group".to_string(), vec![1, 2, 3]);
+        assert_eq!(group.id, group_id);
+        assert_eq!(group.name, "test_group");
+        assert_eq!(group.member_count(), 0);
+        assert_eq!(group.pending_count(), 0);
         assert_eq!(group.user_role, MemberRole::Admin);
     }
 
@@ -149,6 +229,31 @@ mod tests {
     }
 
     #[test]
+    fn test_group_add_pending_member() {
+        let mut group = Group::new("test_group".to_string(), vec![1, 2, 3]);
+        let member = Member::new("bob".to_string(), "pk_bob".to_string());
+
+        group.add_pending_member(member);
+        assert_eq!(group.pending_count(), 1);
+        assert!(group.get_pending_member("bob").is_some());
+    }
+
+    #[test]
+    fn test_group_promote_pending_to_active() {
+        let mut group = Group::new("test_group".to_string(), vec![1, 2, 3]);
+        let member = Member::new("charlie".to_string(), "pk_charlie".to_string());
+
+        group.add_pending_member(member);
+        assert_eq!(group.pending_count(), 1);
+
+        let promoted = group.promote_pending_to_active("charlie");
+        assert!(promoted);
+        assert_eq!(group.pending_count(), 0);
+        assert_eq!(group.member_count(), 1);
+        assert!(group.get_member("charlie").is_some());
+    }
+
+    #[test]
     fn test_group_no_duplicate_members() {
         let mut group = Group::new("test_group".to_string(), vec![1, 2, 3]);
         let member1 = Member::new("alice".to_string(), "pk_alice".to_string());
@@ -160,10 +265,24 @@ mod tests {
     }
 
     #[test]
+    fn test_group_remove_active_member() {
+        let mut group = Group::new("test_group".to_string(), vec![1, 2, 3]);
+        let member = Member::new("alice".to_string(), "pk_alice".to_string());
+
+        group.add_member(member);
+        assert_eq!(group.member_count(), 1);
+
+        let removed = group.remove_active_member("alice");
+        assert!(removed);
+        assert_eq!(group.member_count(), 0);
+    }
+
+    #[test]
     fn test_group_serialization() {
         let group = Group::new("test_group".to_string(), vec![1, 2, 3]);
         let json = serde_json::to_string(&group).unwrap();
         let deserialized: Group = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.name, "test_group");
+        assert_eq!(deserialized.pending_count(), 0);
     }
 }
