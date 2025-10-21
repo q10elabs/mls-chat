@@ -54,23 +54,38 @@ pub fn create_http_server(
     Ok(server)
 }
 
-/// Create a test HTTP server with in-memory database and WebSocket server
+/// Create a test HTTP server with custom database pool
 ///
-/// This is a convenience function for tests that need a fully configured
-/// server without having to manually set up the pool and ws_server.
-/// Binds to a random available port.
+/// Allows tests to provide their own database pool, enabling testing of
+/// data persistence across multiple server instantiations. The server binds
+/// to a random available port.
+///
+/// # Arguments
+/// * `pool` - Database pool to use (can be shared across multiple servers)
 ///
 /// # Returns
 /// A tuple of (server, bind_address) where bind_address can be used to make requests
 ///
 /// # Example
 /// ```ignore
-/// let (server, addr) = server::create_test_http_server()?;
-/// let client = reqwest::Client::new();
-/// let resp = client.get(&format!("http://{}/health", addr)).send().await?;
+/// // Create a persistent pool shared across servers
+/// let pool = web::Data::new(crate::db::create_test_pool());
+///
+/// // First server instance
+/// let (server1, addr1) = server::create_test_http_server_with_pool(pool.clone())?;
+/// tokio::spawn(server1);
+///
+/// // Make requests to first server...
+///
+/// // Second server instance with same pool - data persists
+/// let (server2, addr2) = server::create_test_http_server_with_pool(pool.clone())?;
+/// tokio::spawn(server2);
+///
+/// // Data from first server is still available in second server
 /// ```
-pub fn create_test_http_server() -> std::io::Result<(actix_web::dev::Server, String)> {
-    let pool = web::Data::new(crate::db::create_test_pool());
+pub fn create_test_http_server_with_pool(
+    pool: web::Data<DbPool>,
+) -> std::io::Result<(actix_web::dev::Server, String)> {
     let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
 
     // Bind to 127.0.0.1:0 to get a random available port
@@ -106,6 +121,26 @@ pub fn create_test_http_server() -> std::io::Result<(actix_web::dev::Server, Str
     Ok((server, addr_str))
 }
 
+/// Create a test HTTP server with in-memory database and WebSocket server
+///
+/// This is a convenience function for tests that need a fully configured
+/// server without having to manually set up the pool and ws_server.
+/// Binds to a random available port.
+///
+/// # Returns
+/// A tuple of (server, bind_address) where bind_address can be used to make requests
+///
+/// # Example
+/// ```ignore
+/// let (server, addr) = server::create_test_http_server()?;
+/// let client = reqwest::Client::new();
+/// let resp = client.get(&format!("http://{}/health", addr)).send().await?;
+/// ```
+pub fn create_test_http_server() -> std::io::Result<(actix_web::dev::Server, String)> {
+    let pool = web::Data::new(crate::db::create_test_pool());
+    create_test_http_server_with_pool(pool)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +163,53 @@ mod tests {
         // Try to bind to an invalid address
         let result = create_http_server(pool, ws_server, "invalid_address:99999");
         assert!(result.is_err(), "create_http_server should fail with invalid address");
+    }
+
+    #[tokio::test]
+    async fn test_create_test_http_server_with_pool() {
+        let pool = web::Data::new(crate::db::create_test_pool());
+        let result = create_test_http_server_with_pool(pool);
+        assert!(result.is_ok(), "create_test_http_server_with_pool should succeed");
+
+        let (_server, addr) = result.unwrap();
+        assert!(addr.contains("127.0.0.1:"), "Address should contain 127.0.0.1:");
+    }
+
+    #[tokio::test]
+    async fn test_create_test_http_server_with_pool_persistence() {
+        // Create a shared pool
+        let pool = web::Data::new(crate::db::create_test_pool());
+
+        // Register a user in the pool
+        crate::db::Database::register_user(&pool, "persistence_test", "key_xyz")
+            .await
+            .expect("Failed to register test user");
+
+        // Create first server with shared pool
+        let (server1, _addr1) = create_test_http_server_with_pool(pool.clone())
+            .expect("First server creation should succeed");
+
+        // Data is persisted in the pool
+        let user = crate::db::Database::get_user(&pool, "persistence_test")
+            .await
+            .expect("Query should succeed")
+            .expect("User should exist");
+        assert_eq!(user.username, "persistence_test");
+
+        // Create second server with same pool - data still persists
+        let (server2, _addr2) = create_test_http_server_with_pool(pool.clone())
+            .expect("Second server creation should succeed");
+
+        // Verify user still exists in pool
+        let user_again = crate::db::Database::get_user(&pool, "persistence_test")
+            .await
+            .expect("Query should succeed")
+            .expect("User should still exist");
+        assert_eq!(user_again.username, "persistence_test");
+
+        // Drop servers to clean up (they would normally be spawned)
+        drop(server1);
+        drop(server2);
     }
 
     #[tokio::test]
