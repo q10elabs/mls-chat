@@ -56,6 +56,9 @@ pub enum StorageError {
     
     #[error("Group state not found for {username} in {group_id}")]
     GroupStateNotFound { username: String, group_id: String },
+    
+    #[error("No group members found: {0}")]
+    NoGroupMembers(String),
 }
 
 /// Network-related errors

@@ -38,7 +38,14 @@ pub struct MessageHandler {
 impl MessageHandler {
     /// Connect to the server WebSocket
     pub async fn connect(server_url: &str, username: &str) -> Result<Self> {
-        let url = format!("ws://{}/ws/{}", server_url, username);
+        // Extract host and port from HTTP URL
+        let url = if server_url.starts_with("http://") {
+            format!("ws://{}/ws/{}", &server_url[7..], username)
+        } else if server_url.starts_with("https://") {
+            format!("wss://{}/ws/{}", &server_url[8..], username)
+        } else {
+            format!("ws://{}/ws/{}", server_url, username)
+        };
         
         let (ws_stream, _) = connect_async(&url).await?;
         let (mut write, read) = ws_stream.split();

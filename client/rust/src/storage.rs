@@ -3,7 +3,7 @@
 /// This module handles only application-level metadata storage.
 /// MLS group state is automatically managed by the OpenMlsProvider.
 
-use crate::error::Result;
+use crate::error::{Result, StorageError, ClientError};
 use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
@@ -100,7 +100,10 @@ impl LocalStore {
             Ok(members)
         }).optional()?;
 
-        Ok(result.unwrap_or_default())
+        match result {
+            Some(members) => Ok(members),
+            None => Err(ClientError::Storage(StorageError::NoGroupMembers("No group members found".to_string())))
+        }
     }
 }
 

@@ -55,15 +55,35 @@ impl MlsClient {
             .ok_or_else(|| ClientError::Config("Failed to get home directory".to_string()))?;
         let mlschat_dir = base_dirs.home_dir().join(".mlschat");
 
+        Self::new_with_storage_path(server_url, username, group_name, &mlschat_dir)
+    }
+
+    /// Create a new MLS client with custom storage path (for testing)
+    ///
+    /// # Arguments
+    /// * `server_url` - URL of the MLS server
+    /// * `username` - Username for this client instance
+    /// * `group_name` - Name of the group to create/join
+    /// * `storage_dir` - Custom directory for storage files
+    ///
+    /// # Errors
+    /// * File system errors when creating storage directories
+    /// * Database initialization errors
+    pub fn new_with_storage_path(
+        server_url: &str,
+        username: &str,
+        group_name: &str,
+        storage_dir: &std::path::Path,
+    ) -> Result<Self> {
         // Ensure directory exists
-        std::fs::create_dir_all(&mlschat_dir)?;
+        std::fs::create_dir_all(storage_dir)?;
 
         // Metadata storage (application-level only)
-        let metadata_db_path = mlschat_dir.join("metadata.db");
+        let metadata_db_path = storage_dir.join("metadata.db");
         let metadata_store = LocalStore::new(&metadata_db_path)?;
 
         // MLS provider storage (handles all OpenMLS group state)
-        let mls_db_path = mlschat_dir.join("mls.db");
+        let mls_db_path = storage_dir.join("mls.db");
         let mls_provider = MlsProvider::new(&mls_db_path)?;
 
         let api = ServerApi::new(server_url);
@@ -677,6 +697,21 @@ impl MlsClient {
     /// Test helper: get group ID
     pub fn get_group_id(&self) -> Option<Vec<u8>> {
         self.group_id.clone()
+    }
+
+    /// Get the username (for testing)
+    pub fn get_username(&self) -> &str {
+        &self.username
+    }
+
+    /// Get the group name (for testing)
+    pub fn get_group_name(&self) -> &str {
+        &self.group_name
+    }
+
+    /// Get the API instance (for testing)
+    pub fn get_api(&self) -> &ServerApi {
+        &self.api
     }
 
     /// Test helper: get signature key
