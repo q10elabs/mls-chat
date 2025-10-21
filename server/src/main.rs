@@ -3,18 +3,16 @@
 /// Main server entry point. Handles:
 /// - Command-line argument parsing
 /// - Database initialization
-/// - HTTP and WebSocket server setup
-/// - Request routing
+/// - HTTP and WebSocket server startup
 
 mod config;
 mod db;
 mod handlers;
+mod server;
 
-use actix_web::{web, App, HttpServer, middleware};
+use actix_web::web;
 use config::Config;
-use handlers::{
-    get_backup, get_user_key, health, register_user, store_backup, ws_connect, WsServer,
-};
+use handlers::WsServer;
 use std::sync::Arc;
 
 #[actix_web::main]
@@ -35,27 +33,12 @@ async fn main() -> std::io::Result<()> {
     log::info!("Database initialized");
 
     let pool_data = web::Data::new(pool.clone());
-    let ws_server = web::Data::new(WsServer::new(Arc::new(pool_data)));
+    let ws_server = web::Data::new(WsServer::new(Arc::new(pool_data.clone())));
 
     // Start HTTP server
     let bind_addr = format!("127.0.0.1:{}", config.port);
     log::info!("Starting HTTP server on {}", bind_addr);
 
-    HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(pool.clone()))
-            .app_data(ws_server.clone())
-            .wrap(middleware::Logger::default())
-            // REST endpoints
-            .route("/health", web::get().to(health))
-            .route("/users", web::post().to(register_user))
-            .route("/users/{username}", web::get().to(get_user_key))
-            .route("/backup/{username}", web::post().to(store_backup))
-            .route("/backup/{username}", web::get().to(get_backup))
-            // WebSocket endpoint
-            .route("/ws/{username}", web::get().to(ws_connect))
-    })
-    .bind(&bind_addr)?
-    .run()
-    .await
+    let http_server = server::create_http_server(pool_data, ws_server, &bind_addr)?;
+    http_server.await
 }
