@@ -52,3 +52,6 @@ url = "2.5"
 mls-chat-server = { path = "../../server" }
 tempfile = "3.14"
 tokio-test = "0.4"
+actix-web = "4.11"
+actix = "0.13"
+actix-web-actors = "4.3"

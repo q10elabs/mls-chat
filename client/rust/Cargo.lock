@@ -2073,6 +2073,9 @@ dependencies = [
 name = "mls-chat-client"
 version = "0.1.0"
 dependencies = [
+ "actix",
+ "actix-web",
+ "actix-web-actors",
  "anyhow",
  "bincode",
  "chrono",
