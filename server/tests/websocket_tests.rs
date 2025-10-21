@@ -149,8 +149,10 @@ async fn test_websocket_persist_message() {
     let pool = Arc::new(web::Data::new(mls_chat_server::db::create_test_pool()));
     let server = WsServer::new(pool.clone());
 
+    let alice_key = vec![0x2d, 0x2e, 0x2f, 0x30];
+
     // Register user
-    Database::register_user(pool.as_ref(), "alice", "key_abc")
+    Database::register_user(pool.as_ref(), "alice", &alice_key)
         .await
         .expect("Failed to register");
 
@@ -192,11 +194,14 @@ async fn test_websocket_multiple_clients_same_group() {
     let pool = Arc::new(web::Data::new(mls_chat_server::db::create_test_pool()));
     let server = WsServer::new(pool.clone());
 
+    let alice_key = vec![0x31, 0x32, 0x33, 0x34];
+    let bob_key = vec![0x35, 0x36, 0x37, 0x38];
+
     // Register users
-    Database::register_user(pool.as_ref(), "alice", "key_abc")
+    Database::register_user(pool.as_ref(), "alice", &alice_key)
         .await
         .expect("Failed to register");
-    Database::register_user(pool.as_ref(), "bob", "key_xyz")
+    Database::register_user(pool.as_ref(), "bob", &bob_key)
         .await
         .expect("Failed to register");
 

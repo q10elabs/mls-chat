@@ -5,13 +5,13 @@ use crate::db::{models::*, Database, DbPool};
 use actix_web::{web, HttpResponse, Result as ActixResult};
 use serde_json::json;
 
-/// Register a new user with their public key
+/// Register a new user with their key package
 /// POST /users
 pub async fn register_user(
     pool: web::Data<DbPool>,
     req: web::Json<RegisterUserRequest>,
 ) -> ActixResult<HttpResponse> {
-    match Database::register_user(&pool, &req.username, &req.public_key).await {
+    match Database::register_user(&pool, &req.username, &req.key_package).await {
         Ok(user) => {
             let response = RegisterUserResponse {
                 id: user.id,
@@ -35,7 +35,7 @@ pub async fn register_user(
     }
 }
 
-/// Get a user's public key
+/// Get a user's key package
 /// GET /users/:username
 pub async fn get_user_key(
     pool: web::Data<DbPool>,
@@ -45,7 +45,7 @@ pub async fn get_user_key(
         Ok(Some(user)) => {
             let response = UserKeyResponse {
                 username: user.username,
-                public_key: user.public_key,
+                key_package: user.key_package,
             };
             Ok(HttpResponse::Ok().json(response))
         }

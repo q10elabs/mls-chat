@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct User {
     pub id: i64,
     pub username: String,
-    pub public_key: String,
+    pub key_package: Vec<u8>,
     pub created_at: String,
 }
 
@@ -40,7 +40,7 @@ pub struct Backup {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegisterUserRequest {
     pub username: String,
-    pub public_key: String,
+    pub key_package: Vec<u8>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,7 +53,7 @@ pub struct RegisterUserResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UserKeyResponse {
     pub username: String,
-    pub public_key: String,
+    pub key_package: Vec<u8>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,23 +81,25 @@ mod tests {
 
     #[test]
     fn test_user_struct_creation() {
+        let key_package = vec![0x01, 0x02, 0x03, 0x04];
         let user = User {
             id: 1,
             username: "alice".to_string(),
-            public_key: "key_abc123".to_string(),
+            key_package: key_package.clone(),
             created_at: "2025-10-20T10:00:00Z".to_string(),
         };
 
         assert_eq!(user.id, 1);
         assert_eq!(user.username, "alice");
-        assert_eq!(user.public_key, "key_abc123");
+        assert_eq!(user.key_package, key_package);
     }
 
     #[test]
     fn test_register_user_request_serialization() {
+        let key_package = vec![0x05, 0x06, 0x07, 0x08];
         let request = RegisterUserRequest {
             username: "bob".to_string(),
-            public_key: "key_xyz789".to_string(),
+            key_package: key_package.clone(),
         };
 
         let json = serde_json::to_string(&request).expect("Serialization failed");
@@ -105,7 +107,7 @@ mod tests {
             serde_json::from_str(&json).expect("Deserialization failed");
 
         assert_eq!(deserialized.username, "bob");
-        assert_eq!(deserialized.public_key, "key_xyz789");
+        assert_eq!(deserialized.key_package, key_package);
     }
 
     #[test]

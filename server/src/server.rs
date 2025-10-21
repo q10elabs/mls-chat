@@ -181,7 +181,8 @@ mod tests {
         let pool = web::Data::new(crate::db::create_test_pool());
 
         // Register a user in the pool
-        crate::db::Database::register_user(&pool, "persistence_test", "key_xyz")
+        let key_package = vec![0x19, 0x1a, 0x1b, 0x1c];
+        crate::db::Database::register_user(&pool, "persistence_test", &key_package)
             .await
             .expect("Failed to register test user");
 
@@ -289,11 +290,13 @@ mod tests {
         )
         .await;
 
+        // Create a key package as bytes (base64 encoded in JSON)
+        let key_package = vec![0x1d, 0x1e, 0x1f, 0x20];
         let req = test::TestRequest::post()
             .uri("/users")
             .set_json(serde_json::json!({
                 "username": "alice",
-                "public_key": "key_abc123"
+                "key_package": key_package
             }))
             .to_request();
 
@@ -307,7 +310,8 @@ mod tests {
         let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
 
         // First register a user
-        crate::db::Database::register_user(&pool, "bob", "key_xyz")
+        let key_package = vec![0x21, 0x22, 0x23, 0x24];
+        crate::db::Database::register_user(&pool, "bob", &key_package)
             .await
             .expect("Failed to register test user");
 
@@ -370,7 +374,8 @@ mod tests {
         let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
 
         // First register a user
-        crate::db::Database::register_user(&pool, "charlie", "key_def456")
+        let key_package = vec![0x25, 0x26, 0x27, 0x28];
+        crate::db::Database::register_user(&pool, "charlie", &key_package)
             .await
             .expect("Failed to register test user");
 

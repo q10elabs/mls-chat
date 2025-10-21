@@ -22,7 +22,7 @@ fn create_schema(conn: &Connection) -> SqliteResult<()> {
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
-            public_key TEXT NOT NULL,
+            key_package BLOB NOT NULL,
             created_at TEXT NOT NULL
         );
 
@@ -103,7 +103,7 @@ mod tests {
 
         assert!(columns.contains(&"id".to_string()));
         assert!(columns.contains(&"username".to_string()));
-        assert!(columns.contains(&"public_key".to_string()));
+        assert!(columns.contains(&"key_package".to_string()));
         assert!(columns.contains(&"created_at".to_string()));
     }
 

@@ -7,43 +7,48 @@ use mls_chat_server::db::{Database, DbPool};
 async fn test_user_registration_workflow() {
     let pool = mls_chat_server::db::create_test_pool();
 
+    let alice_key = vec![0x01, 0x02, 0x03, 0x04];
+    let bob_key = vec![0x05, 0x06, 0x07, 0x08];
+
     // Register first user
-    let user1 = Database::register_user(&pool, "alice", "alice_key_123")
+    let user1 = Database::register_user(&pool, "alice", &alice_key)
         .await
         .expect("Failed to register alice");
     assert_eq!(user1.username, "alice");
-    assert_eq!(user1.public_key, "alice_key_123");
+    assert_eq!(user1.key_package, alice_key);
 
     // Register second user
-    let user2 = Database::register_user(&pool, "bob", "bob_key_456")
+    let user2 = Database::register_user(&pool, "bob", &bob_key)
         .await
         .expect("Failed to register bob");
     assert_eq!(user2.username, "bob");
-    assert_eq!(user2.public_key, "bob_key_456");
+    assert_eq!(user2.key_package, bob_key);
 
-    // Retrieve alice's key
+    // Retrieve alice's key package
     let retrieved_alice = Database::get_user(&pool, "alice")
         .await
         .expect("Query failed")
         .expect("User not found");
     assert_eq!(retrieved_alice.username, "alice");
-    assert_eq!(retrieved_alice.public_key, "alice_key_123");
+    assert_eq!(retrieved_alice.key_package, alice_key);
 
-    // Retrieve bob's key
+    // Retrieve bob's key package
     let retrieved_bob = Database::get_user(&pool, "bob")
         .await
         .expect("Query failed")
         .expect("User not found");
     assert_eq!(retrieved_bob.username, "bob");
-    assert_eq!(retrieved_bob.public_key, "bob_key_456");
+    assert_eq!(retrieved_bob.key_package, bob_key);
 }
 
 #[tokio::test]
 async fn test_backup_storage_workflow() {
     let pool = mls_chat_server::db::create_test_pool();
 
+    let charlie_key = vec![0x09, 0x0a, 0x0b, 0x0c];
+
     // Register user
-    Database::register_user(&pool, "charlie", "charlie_key")
+    Database::register_user(&pool, "charlie", &charlie_key)
         .await
         .expect("Failed to register");
 
@@ -80,11 +85,14 @@ async fn test_backup_storage_workflow() {
 async fn test_multiple_users_different_backups() {
     let pool = mls_chat_server::db::create_test_pool();
 
+    let user1_key = vec![0x0d, 0x0e, 0x0f, 0x10];
+    let user2_key = vec![0x11, 0x12, 0x13, 0x14];
+
     // Register users
-    Database::register_user(&pool, "user1", "key1")
+    Database::register_user(&pool, "user1", &user1_key)
         .await
         .expect("Failed to register");
-    Database::register_user(&pool, "user2", "key2")
+    Database::register_user(&pool, "user2", &user2_key)
         .await
         .expect("Failed to register");
 
@@ -145,11 +153,14 @@ async fn test_group_creation_and_retrieval() {
 async fn test_message_storage_and_retrieval() {
     let pool = mls_chat_server::db::create_test_pool();
 
+    let alice_key = vec![0x15, 0x16, 0x17, 0x18];
+    let bob_key = vec![0x19, 0x1a, 0x1b, 0x1c];
+
     // Register users
-    let user1 = Database::register_user(&pool, "alice", "key_abc")
+    let user1 = Database::register_user(&pool, "alice", &alice_key)
         .await
         .expect("Failed to register");
-    let user2 = Database::register_user(&pool, "bob", "key_xyz")
+    let user2 = Database::register_user(&pool, "bob", &bob_key)
         .await
         .expect("Failed to register");
 
@@ -182,13 +193,16 @@ async fn test_message_storage_and_retrieval() {
 async fn test_duplicate_username_error() {
     let pool = mls_chat_server::db::create_test_pool();
 
+    let key1 = vec![0x1d, 0x1e, 0x1f, 0x20];
+    let key2 = vec![0x21, 0x22, 0x23, 0x24];
+
     // Register user
-    Database::register_user(&pool, "alice", "key1")
+    Database::register_user(&pool, "alice", &key1)
         .await
         .expect("Failed to register");
 
     // Try to register duplicate
-    let result = Database::register_user(&pool, "alice", "key2").await;
+    let result = Database::register_user(&pool, "alice", &key2).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("UNIQUE"));
 }
@@ -227,11 +241,14 @@ async fn test_get_nonexistent_group() {
 async fn test_complex_workflow() {
     let pool = mls_chat_server::db::create_test_pool();
 
+    let alice_key = vec![0x25, 0x26, 0x27, 0x28];
+    let bob_key = vec![0x29, 0x2a, 0x2b, 0x2c];
+
     // Create users
-    let alice = Database::register_user(&pool, "alice", "alice_key")
+    let alice = Database::register_user(&pool, "alice", &alice_key)
         .await
         .expect("Failed to register");
-    let bob = Database::register_user(&pool, "bob", "bob_key")
+    let bob = Database::register_user(&pool, "bob", &bob_key)
         .await
         .expect("Failed to register");
 
@@ -271,7 +288,7 @@ async fn test_complex_workflow() {
         .await
         .expect("Query failed")
         .expect("User not found");
-    assert_eq!(alice_retrieved.public_key, "alice_key");
+    assert_eq!(alice_retrieved.key_package, alice_key);
 
     let alice_backup = Database::get_backup(&pool, "alice")
         .await

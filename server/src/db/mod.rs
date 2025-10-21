@@ -30,23 +30,23 @@ pub fn create_test_pool() -> DbPool {
 pub struct Database;
 
 impl Database {
-    /// Register a new user with their public key
-    pub async fn register_user(pool: &DbPool, username: &str, public_key: &str) -> SqliteResult<User> {
+    /// Register a new user with their key package
+    pub async fn register_user(pool: &DbPool, username: &str, key_package: &[u8]) -> SqliteResult<User> {
         let conn = pool.lock().await;
         let created_at = Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT INTO users (username, public_key, created_at) VALUES (?1, ?2, ?3)",
-            params![username, public_key, &created_at],
+            "INSERT INTO users (username, key_package, created_at) VALUES (?1, ?2, ?3)",
+            params![username, key_package, &created_at],
         )?;
 
         // Retrieve the inserted user
-        let mut stmt = conn.prepare("SELECT id, username, public_key, created_at FROM users WHERE username = ?1")?;
+        let mut stmt = conn.prepare("SELECT id, username, key_package, created_at FROM users WHERE username = ?1")?;
         let user = stmt.query_row(params![username], |row| {
             Ok(User {
                 id: row.get(0)?,
                 username: row.get(1)?,
-                public_key: row.get(2)?,
+                key_package: row.get(2)?,
                 created_at: row.get(3)?,
             })
         })?;
@@ -59,7 +59,7 @@ impl Database {
         let conn = pool.lock().await;
 
         let mut stmt = conn.prepare(
-            "SELECT id, username, public_key, created_at FROM users WHERE username = ?1",
+            "SELECT id, username, key_package, created_at FROM users WHERE username = ?1",
         )?;
 
         let user = stmt
@@ -67,7 +67,7 @@ impl Database {
                 Ok(User {
                     id: row.get(0)?,
                     username: row.get(1)?,
-                    public_key: row.get(2)?,
+                    key_package: row.get(2)?,
                     created_at: row.get(3)?,
                 })
             })
@@ -81,7 +81,7 @@ impl Database {
         let conn = pool.lock().await;
 
         let mut stmt = conn.prepare(
-            "SELECT id, username, public_key, created_at FROM users WHERE id = ?1",
+            "SELECT id, username, key_package, created_at FROM users WHERE id = ?1",
         )?;
 
         let user = stmt
@@ -89,7 +89,7 @@ impl Database {
                 Ok(User {
                     id: row.get(0)?,
                     username: row.get(1)?,
-                    public_key: row.get(2)?,
+                    key_package: row.get(2)?,
                     created_at: row.get(3)?,
                 })
             })
@@ -256,19 +256,21 @@ mod tests {
     #[tokio::test]
     async fn test_register_user() {
         let pool = create_test_pool();
-        let user = Database::register_user(&pool, "alice", "key_abc123")
+        let key_package = vec![0x01, 0x02, 0x03, 0x04];
+        let user = Database::register_user(&pool, "alice", &key_package)
             .await
             .expect("Failed to register user");
 
         assert_eq!(user.username, "alice");
-        assert_eq!(user.public_key, "key_abc123");
+        assert_eq!(user.key_package, key_package);
         assert!(user.id > 0);
     }
 
     #[tokio::test]
     async fn test_get_user() {
         let pool = create_test_pool();
-        Database::register_user(&pool, "bob", "key_xyz").await.expect("Failed to register");
+        let key_package = vec![0x05, 0x06, 0x07, 0x08];
+        Database::register_user(&pool, "bob", &key_package).await.expect("Failed to register");
 
         let user = Database::get_user(&pool, "bob")
             .await
@@ -276,7 +278,7 @@ mod tests {
             .expect("User not found");
 
         assert_eq!(user.username, "bob");
-        assert_eq!(user.public_key, "key_xyz");
+        assert_eq!(user.key_package, key_package);
     }
 
     #[tokio::test]
@@ -304,7 +306,8 @@ mod tests {
     #[tokio::test]
     async fn test_store_message() {
         let pool = create_test_pool();
-        let user = Database::register_user(&pool, "alice", "key_abc")
+        let key_package = vec![0x09, 0x0a, 0x0b, 0x0c];
+        let user = Database::register_user(&pool, "alice", &key_package)
             .await
             .expect("Failed to register user");
         let group = Database::create_group(&pool, "group_001", "test")
@@ -323,7 +326,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_group_messages() {
         let pool = create_test_pool();
-        let user = Database::register_user(&pool, "alice", "key_abc")
+        let key_package = vec![0x0d, 0x0e, 0x0f, 0x10];
+        let user = Database::register_user(&pool, "alice", &key_package)
             .await
             .expect("Failed to register user");
         let group = Database::create_group(&pool, "group_001", "test")
@@ -347,7 +351,8 @@ mod tests {
     #[tokio::test]
     async fn test_store_and_get_backup() {
         let pool = create_test_pool();
-        Database::register_user(&pool, "alice", "key_abc")
+        let key_package = vec![0x11, 0x12, 0x13, 0x14];
+        Database::register_user(&pool, "alice", &key_package)
             .await
             .expect("Failed to register user");
 
@@ -370,7 +375,8 @@ mod tests {
     #[tokio::test]
     async fn test_backup_replacement() {
         let pool = create_test_pool();
-        Database::register_user(&pool, "alice", "key_abc")
+        let key_package = vec![0x15, 0x16, 0x17, 0x18];
+        Database::register_user(&pool, "alice", &key_package)
             .await
             .expect("Failed to register user");
 
