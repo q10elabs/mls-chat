@@ -1,0 +1,414 @@
+/// MLS cryptographic operations using OpenMLS
+
+use crate::error::{Result, MlsError};
+use openmls::prelude::*;
+use openmls::messages::group_info::GroupInfo;
+use openmls_rust_crypto::OpenMlsRustCrypto;
+use openmls_basic_credential::SignatureKeyPair;
+
+/// Generate a credential with key for a username
+pub fn generate_credential_with_key(username: &str) -> Result<(CredentialWithKey, SignatureKeyPair)> {
+    let provider = &OpenMlsRustCrypto::default();
+    let ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+    
+    // Create basic credential
+    let credential = BasicCredential::new(username.as_bytes().to_vec());
+    
+    // Generate signature key pair
+    let signature_keys = SignatureKeyPair::new(ciphersuite.signature_algorithm())
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+
+    // Store the signature key into the key store so OpenMLS has access to it
+    signature_keys
+        .store(provider.storage())
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+     
+    let credential_with_key = CredentialWithKey {
+        credential: credential.into(),
+        signature_key: signature_keys.to_public_vec().into(),
+    };
+    
+    Ok((credential_with_key, signature_keys))
+}
+
+/// Generate a key package bundle for the given credential and signature key
+pub fn generate_key_package_bundle(
+    credential: &CredentialWithKey, 
+    signer: &SignatureKeyPair,
+    provider: &impl OpenMlsProvider,
+) -> Result<KeyPackageBundle> {
+    let ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+    
+    let key_package = KeyPackage::builder()
+        .build(
+            ciphersuite,
+            provider,
+            signer,
+            credential.clone(),
+        )
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+    
+    Ok(key_package)
+}
+
+/// Create a new MLS group with configuration
+pub fn create_group_with_config(
+    credential: &CredentialWithKey, 
+    signer: &SignatureKeyPair,
+    provider: &impl OpenMlsProvider,
+) -> Result<MlsGroup> {
+    let group_config = MlsGroupCreateConfig::default();
+    
+    let group = MlsGroup::new(
+        provider,
+        signer,
+        &group_config,
+        credential.clone(),
+    )
+    .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+    
+    Ok(group)
+}
+
+/// Create an application message
+pub fn create_application_message(
+    group: &mut MlsGroup,
+    provider: &impl OpenMlsProvider,
+    signer: &SignatureKeyPair,
+    plaintext: &[u8],
+) -> Result<MlsMessageOut> {
+    let message = group.create_message(
+        provider,
+        signer,
+        plaintext,
+    )
+    .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+    
+    Ok(message)
+}
+
+/// Process an incoming MLS message
+pub fn process_message(
+    group: &mut MlsGroup,
+    provider: &impl OpenMlsProvider,
+    message: &MlsMessageIn,
+) -> Result<ProcessedMessage> {
+    let protocol_message = message.clone().try_into_protocol_message()
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+    
+    let processed_message = group.process_message(
+        provider,
+        protocol_message,
+    )
+    .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+    
+    Ok(processed_message)
+}
+
+/// Add members to the group
+/// Returns (commit_message_for_existing_members, welcome_message_for_new_members, group_info)
+pub fn add_members(
+    group: &mut MlsGroup,
+    provider: &impl OpenMlsProvider,
+    signer: &SignatureKeyPair,
+    key_packages: &[&KeyPackage],
+) -> Result<(MlsMessageOut, MlsMessageOut, Option<GroupInfo>)> {
+    // Convert &[&KeyPackage] to &[KeyPackage] by cloning
+    let key_packages_owned: Vec<KeyPackage> = key_packages.iter().map(|kp| (*kp).clone()).collect();
+    
+    let (commit_message, welcome_message, group_info) = group.add_members(
+        provider,
+        signer,
+        &key_packages_owned,
+    )
+    .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+    
+    Ok((commit_message, welcome_message, group_info))
+}
+
+/// Process a Welcome message to join a group (for new members)
+/// The welcome_message is the encrypted Welcome message received from the group organizer
+pub fn process_welcome_message(
+    provider: &impl OpenMlsProvider,
+    config: &MlsGroupJoinConfig,
+    welcome_message: &MlsMessageIn,
+    ratchet_tree: Option<RatchetTreeIn>,
+) -> Result<MlsGroup> {
+    // Extract Welcome from the incoming message
+    let welcome = match welcome_message.clone().extract() {
+        MlsMessageBodyIn::Welcome(w) => w,
+        _ => return Err(MlsError::OpenMls("Expected Welcome message".to_string()).into()),
+    };
+    
+    // Create a staged join from the welcome message
+    let staged_join = StagedWelcome::new_from_welcome(
+        provider,
+        config,
+        welcome,
+        ratchet_tree,
+    )
+    .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+    
+    // Convert the staged join into a group
+    let group = staged_join.into_group(provider)
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+    
+    Ok(group)
+}
+
+/// Merge pending commit after adding members
+pub fn merge_pending_commit(
+    group: &mut MlsGroup,
+    provider: &impl OpenMlsProvider,
+) -> Result<()> {
+    group.merge_pending_commit(provider)
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+    
+    Ok(())
+}
+
+/// Export ratchet tree for new members
+pub fn export_ratchet_tree(group: &MlsGroup) -> RatchetTreeIn {
+    group.export_ratchet_tree().into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tls_codec::{Deserialize, Serialize};
+
+    #[test]
+    fn test_generate_credential_with_key() {
+        let (_credential, _keypair) = generate_credential_with_key("alice").unwrap();
+        // Credential and keypair generated successfully
+    }
+
+    #[test]
+    fn test_generate_key_package_bundle() {
+        let provider = &OpenMlsRustCrypto::default();
+        let (credential, keypair) = generate_credential_with_key("alice").unwrap();
+        let _key_package = generate_key_package_bundle(&credential, &keypair, provider).unwrap();
+        // Key package generated successfully
+    }
+
+    #[test]
+    fn test_create_group_with_config() {
+        let provider = &OpenMlsRustCrypto::default();
+        let (credential, keypair) = generate_credential_with_key("alice").unwrap();
+        let group = create_group_with_config(&credential, &keypair, provider).unwrap();
+        assert!(!group.group_id().as_slice().is_empty());
+    }
+
+    #[test]
+    fn test_create_and_process_application_message() {
+        let provider = &OpenMlsRustCrypto::default();
+
+        // Alice creates a group
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider).unwrap();
+
+        // Bob generates key package
+        let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
+        let bob_key_package = generate_key_package_bundle(&bob_cred, &bob_key, provider).unwrap();
+
+        // Alice adds Bob to the group
+        let (_commit, welcome_message, _group_info) = add_members(
+            &mut alice_group,
+            provider,
+            &alice_key,
+            &[bob_key_package.key_package()],
+        )
+        .unwrap();
+
+        // Alice merges the pending commit
+        merge_pending_commit(&mut alice_group, provider).unwrap();
+
+        // Bob joins the group via Welcome
+        let ratchet_tree = Some(export_ratchet_tree(&alice_group));
+        let join_config = MlsGroupJoinConfig::default();
+        let serialized = welcome_message.tls_serialize_detached().unwrap();
+        let welcome_in = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+        let mut bob_group =
+            process_welcome_message(provider, &join_config, &welcome_in, ratchet_tree).unwrap();
+
+        // Alice sends a message
+        let plaintext = b"Hello from Alice!";
+        let encrypted = create_application_message(&mut alice_group, provider, &alice_key, plaintext)
+            .unwrap();
+
+        // Serialize the message for transport
+        let serialized = encrypted.tls_serialize_detached().unwrap();
+        let deserialized = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+
+        // Bob processes Alice's message
+        let processed = process_message(&mut bob_group, provider, &deserialized).unwrap();
+
+        // Verify Bob received an application message
+        match processed.content() {
+            ProcessedMessageContent::ApplicationMessage(_app_msg) => {
+                // ApplicationMessage received successfully by Bob
+            }
+            _ => panic!("Expected application message"),
+        }
+    }
+
+    #[test]
+    fn test_add_member_flow() {
+        let provider = &OpenMlsRustCrypto::default();
+
+        // Alice creates group
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider).unwrap();
+
+        // Bob generates key package
+        let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
+        let bob_key_package = generate_key_package_bundle(&bob_cred, &bob_key, provider).unwrap();
+
+        // Alice adds Bob
+        let (_commit, welcome_message, _group_info) = add_members(
+            &mut alice_group,
+            provider,
+            &alice_key,
+            &[bob_key_package.key_package()],
+        )
+        .unwrap();
+
+        // Alice merges the pending commit
+        merge_pending_commit(&mut alice_group, provider).unwrap();
+
+        // Bob processes Welcome message (with ratchet tree from Alice's group)
+        let ratchet_tree = Some(export_ratchet_tree(&alice_group));
+        let join_config = MlsGroupJoinConfig::default();
+        // Serialize and deserialize the welcome message to convert MlsMessageOut to MlsMessageIn
+        let serialized = welcome_message.tls_serialize_detached().unwrap();
+        let welcome_in = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+        let bob_group = process_welcome_message(provider, &join_config, &welcome_in, ratchet_tree).unwrap();
+
+        assert_eq!(bob_group.group_id().as_slice(), alice_group.group_id().as_slice());
+    }
+
+    #[test]
+    fn test_two_party_messaging() {
+        let provider = &OpenMlsRustCrypto::default();
+
+        // Alice creates group
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider).unwrap();
+
+        // Bob generates key package
+        let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
+        let bob_key_package = generate_key_package_bundle(&bob_cred, &bob_key, provider).unwrap();
+
+        // Alice adds Bob
+        let (_commit, welcome_message, _group_info) = add_members(
+            &mut alice_group,
+            provider,
+            &alice_key,
+            &[bob_key_package.key_package()],
+        )
+        .unwrap();
+
+        // Alice merges the pending commit
+        merge_pending_commit(&mut alice_group, provider).unwrap();
+
+        // Bob processes Welcome message
+        let ratchet_tree = Some(export_ratchet_tree(&alice_group));
+        let join_config = MlsGroupJoinConfig::default();
+        let serialized = welcome_message.tls_serialize_detached().unwrap();
+        let welcome_in = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+        let mut bob_group = process_welcome_message(provider, &join_config, &welcome_in, ratchet_tree).unwrap();
+
+        // Alice sends a message
+        let alice_message = b"Hello from Alice!";
+        let encrypted_alice = create_application_message(&mut alice_group, provider, &alice_key, alice_message).unwrap();
+
+        // Bob processes Alice's message
+        let serialized = encrypted_alice.tls_serialize_detached().unwrap();
+        let deserialized = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+        let processed = process_message(&mut bob_group, provider, &deserialized).unwrap();
+
+        // Verify Bob received Alice's message
+        match processed.content() {
+            ProcessedMessageContent::ApplicationMessage(_app_msg) => {
+                // ApplicationMessage received successfully
+            }
+            _ => panic!("Expected application message"),
+        }
+    }
+
+    #[test]
+    fn test_three_party_messaging() {
+        let provider = &OpenMlsRustCrypto::default();
+
+        // Alice creates group
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider).unwrap();
+
+        // Bob joins
+        let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
+        let bob_key_package = generate_key_package_bundle(&bob_cred, &bob_key, provider).unwrap();
+        let (_commit1, welcome_bob_message, _) =
+            add_members(&mut alice_group, provider, &alice_key, &[bob_key_package.key_package()])
+                .unwrap();
+        merge_pending_commit(&mut alice_group, provider).unwrap();
+
+        let ratchet_tree_bob = Some(export_ratchet_tree(&alice_group));
+        let join_config = MlsGroupJoinConfig::default();
+        let serialized = welcome_bob_message.tls_serialize_detached().unwrap();
+        let welcome_bob_in = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+        let mut bob_group =
+            process_welcome_message(provider, &join_config, &welcome_bob_in, ratchet_tree_bob)
+                .unwrap();
+
+        // Bob sends a message to Alice (while they're both at epoch 1)
+        let bob_message = b"Hello from Bob!";
+        let encrypted_bob = create_application_message(&mut bob_group, provider, &bob_key, bob_message)
+            .unwrap();
+
+        // Alice processes Bob's message
+        let serialized = encrypted_bob.tls_serialize_detached().unwrap();
+        let deserialized = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+        let processed_alice = process_message(&mut alice_group, provider, &deserialized).unwrap();
+
+        // Verify Alice received Bob's message
+        match processed_alice.content() {
+            ProcessedMessageContent::ApplicationMessage(_app_msg) => {
+                // ApplicationMessage received successfully
+            }
+            _ => panic!("Expected application message from Bob"),
+        }
+
+        // Now Carol joins (Alice is at epoch 2, Bob is still at epoch 1)
+        let (carol_cred, carol_key) = generate_credential_with_key("carol").unwrap();
+        let carol_key_package = generate_key_package_bundle(&carol_cred, &carol_key, provider).unwrap();
+        let (_commit2, welcome_carol_message, _) =
+            add_members(&mut alice_group, provider, &alice_key, &[carol_key_package.key_package()])
+                .unwrap();
+        merge_pending_commit(&mut alice_group, provider).unwrap();
+
+        let ratchet_tree_carol = Some(export_ratchet_tree(&alice_group));
+        let serialized = welcome_carol_message.tls_serialize_detached().unwrap();
+        let welcome_carol_in = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+        let mut carol_group = process_welcome_message(provider, &join_config, &welcome_carol_in, ratchet_tree_carol)
+            .unwrap();
+
+        // Carol sends a message to Alice (who is at epoch 2)
+        let carol_message = b"Hello from Carol!";
+        let encrypted_carol =
+            create_application_message(&mut carol_group, provider, &carol_key, carol_message).unwrap();
+
+        // Alice processes Carol's message
+        let serialized = encrypted_carol.tls_serialize_detached().unwrap();
+        let deserialized = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+        let processed_alice_from_carol = process_message(&mut alice_group, provider, &deserialized)
+            .unwrap();
+
+        // Verify Alice received Carol's message
+        match processed_alice_from_carol.content() {
+            ProcessedMessageContent::ApplicationMessage(_app_msg) => {
+                // ApplicationMessage received successfully
+            }
+            _ => panic!("Expected application message from Carol"),
+        }
+    }
+}
