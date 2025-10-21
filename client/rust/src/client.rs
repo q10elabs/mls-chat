@@ -257,6 +257,13 @@ impl MlsClient {
 
                         self.group_id = Some(group_id);
                         self.mls_group = Some(group);
+
+                        // Store the initial member (creator) in metadata store
+                        self.metadata_store.save_group_members(
+                            &self.username,
+                            &self.group_name,
+                            &[self.username.clone()],
+                        )?;
                     }
                     }
                 }
@@ -996,6 +1003,7 @@ mod tests {
     }
 
 }
+
 
 
 
