@@ -13,6 +13,7 @@ openmls = "0.7"
 openmls_rust_crypto = "0.4"
 openmls_traits = "0.4"
 openmls_basic_credential = "0.4"
+tls_codec = "0.4"
 
 # Networking
 reqwest = { version = "0.12", features = ["json"] }
@@ -46,6 +47,7 @@ env_logger = "0.11"
 uuid = { version = "1.18", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
+base64 = "0.22"
 
 [dev-dependencies]
 # Server for integration tests
