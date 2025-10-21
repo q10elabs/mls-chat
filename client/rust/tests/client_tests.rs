@@ -15,10 +15,10 @@ async fn test_group_creation_stores_mapping() {
         .await
         .expect("Failed to create client");
 
-    // Skip registration, manually set up identity for local testing
-    // In a real test, we'd mock the server or use a test server
-    // For now, we test what we can without server
+    // Initialize identity (creates local credentials)
+    client.initialize().await.expect("Failed to initialize");
 
+    // Now connect to group should succeed without server (no WebSocket needed for this test)
     match client.connect_to_group().await {
         Ok(()) => {
             // Group created successfully
@@ -27,11 +27,12 @@ async fn test_group_creation_stores_mapping() {
             assert!(!group_id.is_empty(), "Group ID should not be empty");
         }
         Err(e) => {
-            // Expected to fail without server registration
+            // WebSocket connection will fail, that's ok - group was created
             let err_str = format!("{}", e);
+            // We expect WebSocket error, not MLS error
             assert!(
-                err_str.contains("Network") || err_str.contains("not found") || err_str.contains("MLS"),
-                "Expected network or MLS error, got: {}",
+                err_str.contains("WebSocket") || err_str.contains("IO error"),
+                "Expected WebSocket error, got: {}",
                 e
             );
         }
@@ -120,20 +121,24 @@ async fn test_different_users_are_separate() {
     assert!(bob.get_identity().is_none());
 }
 
-/// Test 6: List members works even without group connection
+/// Test 6: List members returns default with creator
 #[tokio::test]
 async fn test_list_members() {
     let _temp_dir = tempdir().expect("Failed to create temp dir");
 
-    let client = MlsClient::new("http://localhost:4000", "alice", "group")
+    let mut client = MlsClient::new("http://localhost:4000", "alice", "group")
         .await
         .expect("Failed to create client");
 
-    // List members should work (returns default with creator)
+    // Initialize to set up identity
+    client.initialize().await.expect("Failed to initialize");
+
+    // List members should return creator by default
     let members = client.list_members();
     assert!(
         members.contains(&"alice".to_string()),
-        "Creator should be in member list"
+        "Creator should be in member list, got: {:?}",
+        members
     );
 }
 

@@ -19,13 +19,17 @@ struct RegisterUserRequest {
 
 #[derive(Deserialize)]
 struct RegisterUserResponse {
+    #[allow(dead_code)]
     id: i64,
+    #[allow(dead_code)]
     username: String,
+    #[allow(dead_code)]
     created_at: String,
 }
 
 #[derive(Deserialize)]
 struct UserKeyResponse {
+    #[allow(dead_code)]
     username: String,
     key_package: Vec<u8>,
 }

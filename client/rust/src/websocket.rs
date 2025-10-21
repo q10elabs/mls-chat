@@ -1,6 +1,7 @@
 /// WebSocket message handler for real-time communication
 
 use crate::error::Result;
+use crate::models::MlsMessageEnvelope;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -17,6 +18,9 @@ struct SendMessage {
     group_id: String,
     encrypted_content: String,
 }
+
+/// Incoming message envelope from WebSocket (discriminated by type)
+pub type IncomingMessageEnvelope = MlsMessageEnvelope;
 
 #[derive(Deserialize)]
 pub struct IncomingMessage {
@@ -92,10 +96,18 @@ impl MessageHandler {
             group_id: group_id.to_string(),
             encrypted_content: encrypted_content.to_string(),
         };
-        
+
         let json = serde_json::to_string(&message)?;
         let ws_message = Message::Text(json.into());
-        
+
+        self.sender.unbounded_send(ws_message)?;
+        Ok(())
+    }
+
+    /// Send an MLS message envelope (application, welcome, or commit)
+    pub async fn send_envelope(&self, envelope: &MlsMessageEnvelope) -> Result<()> {
+        let json = serde_json::to_string(envelope)?;
+        let ws_message = Message::Text(json.into());
         self.sender.unbounded_send(ws_message)?;
         Ok(())
     }
@@ -106,6 +118,22 @@ impl MessageHandler {
             match msg {
                 Message::Text(text) => {
                     let incoming: IncomingMessage = serde_json::from_str(&text)?;
+                    Ok(Some(incoming))
+                }
+                Message::Close(_) => Ok(None),
+                _ => Ok(None),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get the next incoming message envelope (supports discriminated MLS messages)
+    pub async fn next_envelope(&mut self) -> Result<Option<IncomingMessageEnvelope>> {
+        if let Some(msg) = self.receiver.next().await {
+            match msg {
+                Message::Text(text) => {
+                    let incoming: IncomingMessageEnvelope = serde_json::from_str(&text)?;
                     Ok(Some(incoming))
                 }
                 Message::Close(_) => Ok(None),
