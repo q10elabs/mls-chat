@@ -14,7 +14,7 @@ pub struct ServerApi {
 #[derive(Serialize)]
 struct RegisterUserRequest {
     username: String,
-    public_key: String,
+    key_package: Vec<u8>,
 }
 
 #[derive(Deserialize)]
@@ -27,7 +27,7 @@ struct RegisterUserResponse {
 #[derive(Deserialize)]
 struct UserKeyResponse {
     username: String,
-    public_key: String,
+    key_package: Vec<u8>,
 }
 
 impl ServerApi {
@@ -44,11 +44,11 @@ impl ServerApi {
         }
     }
 
-    /// Register a user with the server
-    pub async fn register_user(&self, username: &str, public_key: &str) -> Result<()> {
+    /// Register a user with the server, sending their KeyPackage
+    pub async fn register_user(&self, username: &str, key_package: &[u8]) -> Result<()> {
         let request = RegisterUserRequest {
             username: username.to_string(),
-            public_key: public_key.to_string(),
+            key_package: key_package.to_vec(),
         };
 
         let response = self.client
@@ -64,8 +64,8 @@ impl ServerApi {
         }
     }
 
-    /// Get a user's public key from the server
-    pub async fn get_user_key(&self, username: &str) -> Result<String> {
+    /// Get a user's KeyPackage from the server
+    pub async fn get_user_key(&self, username: &str) -> Result<Vec<u8>> {
         let response = self.client
             .get(&format!("{}/users/{}", self.base_url, username))
             .send()
@@ -73,7 +73,7 @@ impl ServerApi {
 
         if response.status().is_success() {
             let user_key: UserKeyResponse = response.json().await?;
-            Ok(user_key.public_key)
+            Ok(user_key.key_package)
         } else if response.status() == 404 {
             Err(NetworkError::Server("User not found".to_string()).into())
         } else {

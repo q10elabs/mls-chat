@@ -5,7 +5,34 @@
 
 use mls_chat_client::api::ServerApi;
 use mls_chat_client::websocket::MessageHandler;
+use mls_chat_client::crypto;
+use tls_codec::Serialize;
 use std::time::Duration;
+
+/// Helper function to generate a valid KeyPackage for testing
+fn generate_test_key_package(username: &str) -> Vec<u8> {
+    // Create a temporary provider for key package generation
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    let db_path = temp_dir.path().join("test.db");
+    let provider = mls_chat_client::provider::MlsProvider::new(&db_path)
+        .expect("Failed to create provider");
+
+    // Generate credential and signature key
+    let (credential, sig_key) = crypto::generate_credential_with_key(username)
+        .expect("Failed to generate credential");
+
+    // Generate key package bundle
+    let key_package_bundle = crypto::generate_key_package_bundle(&credential, &sig_key, &provider)
+        .expect("Failed to generate key package");
+
+    // Serialize using TLS codec
+    key_package_bundle
+        .key_package()
+        .tls_serialize_detached()
+        .expect("Failed to serialize key package")
+}
 
 #[tokio::test]
 async fn test_websocket_connect() {
@@ -19,7 +46,8 @@ async fn test_websocket_connect() {
 
     // Register a user via HTTP
     let api = ServerApi::new(&format!("http://{}", addr));
-    api.register_user("alice", "alice_key")
+    let alice_key_package = generate_test_key_package("alice");
+    api.register_user("alice", &alice_key_package)
         .await
         .expect("User registration should succeed");
 
@@ -41,7 +69,8 @@ async fn test_subscribe_to_group() {
 
     // Register a user via HTTP
     let api = ServerApi::new(&format!("http://{}", addr));
-    api.register_user("alice", "alice_key")
+    let alice_key_package = generate_test_key_package("alice");
+    api.register_user("alice", &alice_key_package)
         .await
         .expect("User registration should succeed");
 
@@ -68,7 +97,8 @@ async fn test_send_message_via_websocket() {
 
     // Register a user via HTTP
     let api = ServerApi::new(&format!("http://{}", addr));
-    api.register_user("alice", "alice_key")
+    let alice_key_package = generate_test_key_package("alice");
+    api.register_user("alice", &alice_key_package)
         .await
         .expect("User registration should succeed");
 
@@ -100,10 +130,12 @@ async fn test_two_clients_exchange_messages() {
 
     // Register two users via HTTP
     let api = ServerApi::new(&format!("http://{}", addr));
-    api.register_user("alice", "alice_key")
+    let alice_key_package = generate_test_key_package("alice");
+    let bob_key_package = generate_test_key_package("bob");
+    api.register_user("alice", &alice_key_package)
         .await
         .expect("Alice registration should succeed");
-    api.register_user("bob", "bob_key")
+    api.register_user("bob", &bob_key_package)
         .await
         .expect("Bob registration should succeed");
 
@@ -165,7 +197,8 @@ async fn test_multiple_groups_isolation() {
 
     // Register user via HTTP
     let api = ServerApi::new(&format!("http://{}", addr));
-    api.register_user("alice", "alice_key")
+    let alice_key_package = generate_test_key_package("alice");
+    api.register_user("alice", &alice_key_package)
         .await
         .expect("User registration should succeed");
 
@@ -220,7 +253,8 @@ async fn test_message_persistence() {
 
     // Register user via HTTP
     let api = ServerApi::new(&format!("http://{}", addr));
-    api.register_user("alice", "alice_key")
+    let alice_key_package = generate_test_key_package("alice");
+    api.register_user("alice", &alice_key_package)
         .await
         .expect("User registration should succeed");
 

@@ -85,7 +85,7 @@ impl MlsClient {
     /// Initialize the client (load or create identity, register with server)
     ///
     /// Creates or loads MLS credential and signature keys for this username.
-    /// Registers the public key with the server.
+    /// Generates a KeyPackage and registers it with the server.
     ///
     /// Uses persistent signature key storage via OpenMLS storage provider.
     /// Signature keys are reused across sessions for this username.
@@ -93,7 +93,7 @@ impl MlsClient {
     /// # Errors
     /// * Storage errors when loading/saving identity
     /// * Network errors when registering with server
-    /// * Crypto errors when generating credentials
+    /// * Crypto errors when generating credentials or key packages
     pub async fn initialize(&mut self) -> Result<()> {
         // Load or create a persistent identity using the IdentityManager
         let stored_identity = IdentityManager::load_or_create(
@@ -118,9 +118,24 @@ impl MlsClient {
             self.username
         );
 
-        // Register with server (idempotent)
-        let public_key_b64 = general_purpose::STANDARD.encode(&keypair_blob);
-        self.api.register_user(&self.username, &public_key_b64).await?;
+        // Generate a KeyPackage for this user
+        let key_package_bundle = crypto::generate_key_package_bundle(
+            self.credential_with_key.as_ref().unwrap(),
+            self.signature_key.as_ref().unwrap(),
+            &self.mls_provider,
+        )?;
+
+        // Serialize the KeyPackage using TLS codec (standard MLS wire format)
+        use tls_codec::Serialize;
+        let key_package_bytes = key_package_bundle
+            .key_package()
+            .tls_serialize_detached()
+            .map_err(|_e| crate::error::ClientError::Mls(
+                crate::error::MlsError::OpenMls("Failed to serialize key package".to_string())
+            ))?;
+
+        // Register with server (idempotent) - sends the serialized KeyPackage
+        self.api.register_user(&self.username, &key_package_bytes).await?;
 
         Ok(())
     }
