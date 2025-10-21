@@ -28,30 +28,24 @@ The server uses SQLite in WAL mode to persist data.
 The directory `client` contains client programs (`client/rust` for a
 Rust client; `client/node` for a Node.js client).
 
-Run with:
+The general function of the client is to create/connect to a MLS group
+and let the user chat with other members of the group:
+
+- the first user that connects to the group creates it and becames its administrator.
+- the administrator can "invite" other users. The invitations are delivered to their inbox on the server.
+- when another user connects to the server they check if they have a pending invitation for the group first, and use that if there is one.
+
+Run the client with:
 
 ```
-   ./client --server hostname:NNNN [--config configdir]  <username>
+   ./client --server hostname:NNNN <groupname> <username>
 ```
-
-If the `--config` flag is not specified, the client stores its configuration in `~/.mlschat`. The selected directory contains:
-
-- `config.toml`: configuration parameters.
-- `client.db`: persisted client keys and chat logs.
 
 The client offers the user a simple command line interface at the bottom of the screen.
 
 The following commands are supported:
 
-- `/create #groupname`: create a group with name `groupname`. Also selects `groupname` to become the default group ("current") to send messages/commands to.
-- `/g #groupname`: select `groupname` to become the current group.
-- `/invite username`: invite `username` to the current group.
-- `/accept #groupname`: accept the invitation to join `groupname`.
-- `/decline #groupname`: decline the invitation to join `groupname`.
-- `/kick username`: kick `username` away from the current group. After this command, `username` cannot send messages to the group or receive group messages.
-- `/mod username`: set `username` as an admin for the group. (Only admins can invite other users and kick them.)
-- `/unmod username`: unset `username` as an admin for the group.
-- `/groups`: list the groups that the current user is a member of. The text `(admin)` is added next to group names where the current user is an admin.
+- `/invite username`: invite `username` to the current group. Only available if the user created the group (is an administrator).
 - `/list`: list the users in the current group. The text `(admin)` is added next to user names who are admin in the group.
 
 When the user enters text that does not start with `/`, this is
@@ -71,3 +65,4 @@ And control messages (from commands) are printed as:
   #groupname   action...
 ```
 
+The state of the client (in particular user keys) are stored in the `~/.mlschat` directory.
