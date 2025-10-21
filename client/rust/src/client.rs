@@ -13,6 +13,7 @@ use crate::storage::LocalStore;
 use crate::websocket::MessageHandler;
 use base64::{engine::general_purpose, Engine as _};
 use directories::BaseDirs;
+use openmls::prelude::GroupId;
 use tls_codec::Deserialize;
 
 /// Main MLS client
@@ -27,6 +28,8 @@ pub struct MlsClient {
     identity: Option<Identity>,
     /// Cached signature key pair for this session
     signature_key: Option<openmls_basic_credential::SignatureKeyPair>,
+    /// Cached credential with key for this session (reused across groups)
+    credential_with_key: Option<openmls::prelude::CredentialWithKey>,
     /// Current MLS group state (persisted across operations)
     mls_group: Option<openmls::prelude::MlsGroup>,
     /// Group ID for this session (used to load/save group state)
@@ -73,6 +76,7 @@ impl MlsClient {
             websocket: None,
             identity: None,
             signature_key: None,
+            credential_with_key: None,
             mls_group: None,
             group_id: None,
         })
@@ -100,13 +104,14 @@ impl MlsClient {
 
         let keypair_blob = stored_identity.signature_key.to_public_vec();
 
-        // Store in-memory references
+        // Store in-memory references (credential_with_key is reused across all groups for this user)
         self.identity = Some(Identity {
             username: self.username.clone(),
             keypair_blob: keypair_blob.clone(),
             credential_blob: vec![], // Not used - regenerated from username
         });
         self.signature_key = Some(stored_identity.signature_key);
+        self.credential_with_key = Some(stored_identity.credential_with_key);
 
         log::info!(
             "Initialized identity for {} with persistent signature key",
@@ -122,7 +127,17 @@ impl MlsClient {
 
     /// Connect to group (create or load existing)
     ///
-    /// Creates a new MLS group if it doesn't exist, or loads an existing one.
+    /// Creates a new MLS group if it doesn't exist, or loads an existing one from
+    /// persistent storage. The group state is automatically managed by the OpenMLS
+    /// storage provider.
+    ///
+    /// **Implementation Details:**
+    /// - If group metadata exists: Load the persisted group state via `MlsGroup::load()`
+    ///   (which preserves epoch, member list, and key material)
+    /// - If group metadata doesn't exist: Create a new group using the stored credential_with_key
+    /// - Uses the user's stored identity (credential_with_key) set during initialize()
+    /// - Does NOT regenerate credentials on reconnection (per OpenMLS documentation)
+    ///
     /// Also connects the WebSocket for real-time messaging.
     ///
     /// # Errors
@@ -136,41 +151,88 @@ impl MlsClient {
 
         if let Some(sig_key) = &self.signature_key {
             if let Some(_identity) = &self.identity {
-                // Try to load existing group ID mapping from metadata store
-                match self.mls_provider.load_group_by_name(&group_id_key) {
+                if let Some(credential_with_key) = &self.credential_with_key {
+                    // Use the stored credential from initialize() - don't regenerate
+                    // This is the same credential used for all groups for this user
+
+                    // Try to load existing group ID mapping from metadata store
+                    match self.mls_provider.load_group_by_name(&group_id_key) {
                     Ok(Some(stored_group_id)) => {
-                        // Group mapping exists - create a new group instance with the same ID
-                        // Note: In a production system, we'd deserialize the actual group state from storage
-                        // For now, we create a fresh group (this still maintains the same group ID)
-                        let (credential_with_key, _) = crypto::generate_credential_with_key(&self.username)?;
-                        let group = crypto::create_group_with_config(&credential_with_key, sig_key, &self.mls_provider)?;
+                        // Group mapping exists in metadata - LOAD the persisted group state
+                        // Per OpenMLS persistence.md: "MlsGroup can be loaded from the provider
+                        // using the load constructor, which can be called with the GroupId"
+                        // Convert bytes to GroupId by reconstructing from stored_group_id
+                        // The stored_group_id is the serialized form of GroupId
+                        match crypto::load_group_from_storage(
+                            &self.mls_provider,
+                            &GroupId::from_slice(&stored_group_id),
+                        ) {
+                            Ok(Some(group)) => {
+                                log::info!(
+                                    "Loaded existing MLS group: {} (id: {})",
+                                    self.group_name,
+                                    base64::engine::general_purpose::STANDARD.encode(&stored_group_id)
+                                );
+                                self.group_id = Some(stored_group_id);
+                                self.mls_group = Some(group);
+                            }
+                            Ok(None) => {
+                                // Group ID in metadata but not in storage - data inconsistency
+                                // Recreate the group as fallback
+                                log::warn!(
+                                    "Group metadata exists but group not found in storage. Recreating group."
+                                );
+                                let group = crypto::create_group_with_config(
+                                    &credential_with_key,
+                                    sig_key,
+                                    &self.mls_provider,
+                                )?;
+                                let group_id = group.group_id().as_slice().to_vec();
+                                self.mls_provider.save_group_name(&group_id_key, &group_id)?;
 
-                        log::info!("Reconnected to existing MLS group: {} (stored id: {})",
-                            self.group_name,
-                            base64::engine::general_purpose::STANDARD.encode(&stored_group_id));
-
-                        self.group_id = Some(stored_group_id);
-                        self.mls_group = Some(group);
+                                log::info!(
+                                    "Recreated MLS group: {} (id: {})",
+                                    self.group_name,
+                                    base64::engine::general_purpose::STANDARD.encode(&group_id)
+                                );
+                                self.group_id = Some(group_id);
+                                self.mls_group = Some(group);
+                            }
+                            Err(e) => {
+                                // Error loading group from storage
+                                log::error!("Failed to load group from storage: {}", e);
+                                return Err(e);
+                            }
+                        }
                     }
                     Ok(None) => {
-                        // Group doesn't exist, create it
-                        let (credential_with_key, _) = crypto::generate_credential_with_key(&self.username)?;
-                        let group = crypto::create_group_with_config(&credential_with_key, sig_key, &self.mls_provider)?;
+                        // Group doesn't exist - create it
+                        let group = crypto::create_group_with_config(
+                            &credential_with_key,
+                            sig_key,
+                            &self.mls_provider,
+                        )?;
                         let group_id = group.group_id().as_slice().to_vec();
 
                         // Store the group ID mapping for later retrieval
                         self.mls_provider.save_group_name(&group_id_key, &group_id)?;
 
-                        log::info!("Created new MLS group: {} (id: {})", self.group_name,
-                            base64::engine::general_purpose::STANDARD.encode(&group_id));
+                        log::info!(
+                            "Created new MLS group: {} (id: {})",
+                            self.group_name,
+                            base64::engine::general_purpose::STANDARD.encode(&group_id)
+                        );
                         self.group_id = Some(group_id);
                         self.mls_group = Some(group);
                     }
                     Err(e) => {
-                        // Error checking storage, create new group
-                        log::warn!("Error loading group from storage: {}, creating new group", e);
-                        let (credential_with_key, _) = crypto::generate_credential_with_key(&self.username)?;
-                        let group = crypto::create_group_with_config(&credential_with_key, sig_key, &self.mls_provider)?;
+                        // Error checking storage - create new group as fallback
+                        log::warn!("Error checking group mapping: {}. Creating new group.", e);
+                        let group = crypto::create_group_with_config(
+                            &credential_with_key,
+                            sig_key,
+                            &self.mls_provider,
+                        )?;
                         let group_id = group.group_id().as_slice().to_vec();
 
                         // Try to store the mapping
@@ -179,13 +241,18 @@ impl MlsClient {
                         self.group_id = Some(group_id);
                         self.mls_group = Some(group);
                     }
+                    }
                 }
             }
         }
 
         // Connect WebSocket for real-time messaging
         self.websocket = Some(MessageHandler::connect(&self.server_url, &self.username).await?);
-        self.websocket.as_ref().unwrap().subscribe_to_group(&self.group_name).await?;
+        self.websocket
+            .as_ref()
+            .unwrap()
+            .subscribe_to_group(&self.group_name)
+            .await?;
 
         Ok(())
     }
@@ -463,4 +530,157 @@ impl MlsClient {
         
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openmls::prelude::OpenMlsProvider;
+
+    #[test]
+    fn test_create_group_stores_metadata() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let mls_provider = crate::provider::MlsProvider::new(&db_path).unwrap();
+
+        let group_id_key = "alice:testgroup";
+
+        // Verify group doesn't exist initially
+        let exists = mls_provider.group_exists(group_id_key).unwrap();
+        assert!(!exists, "Group should not exist initially");
+
+        // Create a test group ID (from a real group)
+        let (cred, sig_key) = crate::crypto::generate_credential_with_key("alice").unwrap();
+        let group = crate::crypto::create_group_with_config(&cred, &sig_key, &mls_provider).unwrap();
+        let group_id = group.group_id().as_slice().to_vec();
+
+        // Store metadata
+        mls_provider
+            .save_group_name(group_id_key, &group_id)
+            .unwrap();
+
+        // Verify it's stored
+        let stored = mls_provider.load_group_by_name(group_id_key).unwrap();
+        assert!(stored.is_some(), "Group should be stored in metadata");
+        assert_eq!(stored.unwrap(), group_id, "Stored group ID should match");
+    }
+
+    #[test]
+    fn test_load_group_preserves_state() {
+        // This test verifies the critical fix: that loading a group preserves its state
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let mls_provider = crate::provider::MlsProvider::new(&db_path).unwrap();
+
+        // Create a group
+        let (credential_with_key, _) = crate::crypto::generate_credential_with_key("alice").unwrap();
+        let sig_key = crate::crypto::generate_credential_with_key("alice").unwrap().1;
+
+        let group1 = crate::crypto::create_group_with_config(&credential_with_key, &sig_key, &mls_provider)
+            .unwrap();
+        let initial_epoch = group1.epoch();
+        let group_id = group1.group_id().clone();
+
+        // Add a member to advance epoch
+        let (bob_cred, bob_key) = crate::crypto::generate_credential_with_key("bob").unwrap();
+        let bob_key_package = crate::crypto::generate_key_package_bundle(&bob_cred, &bob_key, &mls_provider).unwrap();
+
+        let mut group2 = crate::crypto::load_group_from_storage(&mls_provider, &group_id)
+            .unwrap()
+            .unwrap();
+
+        let (_commit, _welcome, _group_info) = crate::crypto::add_members(
+            &mut group2,
+            &mls_provider,
+            &sig_key,
+            &[bob_key_package.key_package()],
+        ).unwrap();
+
+        crate::crypto::merge_pending_commit(&mut group2, &mls_provider).unwrap();
+        let epoch_after_add = group2.epoch();
+
+        // Now load the group from storage again
+        let loaded_group = crate::crypto::load_group_from_storage(&mls_provider, &group_id)
+            .unwrap();
+
+        assert!(
+            loaded_group.is_some(),
+            "Group should exist in storage after modification"
+        );
+
+        let loaded = loaded_group.unwrap();
+
+        // Verify state is preserved - THIS IS THE CRITICAL FIX
+        assert_eq!(
+            loaded.group_id(),
+            group1.group_id(),
+            "Loaded group should have same ID"
+        );
+        assert_eq!(
+            loaded.epoch(),
+            epoch_after_add,
+            "Loaded group should have same epoch after member add - epoch preservation is the critical fix!"
+        );
+        assert!(
+            loaded.epoch() > initial_epoch,
+            "Epoch should have advanced after member addition"
+        );
+    }
+
+    #[test]
+    fn test_reconnect_loads_not_creates() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let mls_provider = crate::provider::MlsProvider::new(&db_path).unwrap();
+        let group_id_key = "alice:testgroup";
+
+        // Alice creates a group
+        let (credential_with_key, _) = crate::crypto::generate_credential_with_key("alice").unwrap();
+        let sig_key = crate::crypto::generate_credential_with_key("alice").unwrap().1;
+
+        let mut alice_group1 = crate::crypto::create_group_with_config(&credential_with_key, &sig_key, &mls_provider).unwrap();
+        let alice_group1_id = alice_group1.group_id().clone();
+
+        // Send a message to advance epoch
+        let msg = b"Hello from Alice";
+        let _encrypted = crate::crypto::create_application_message(&mut alice_group1, &mls_provider, &sig_key, msg).unwrap();
+        let alice_epoch_1 = alice_group1.epoch();
+
+        // Store metadata
+        mls_provider.save_group_name(group_id_key, &alice_group1_id.as_slice().to_vec()).unwrap();
+
+        // --- Simulate disconnection and reconnection ---
+        // In a new session, load the group
+        let stored_id = mls_provider.load_group_by_name(group_id_key).unwrap();
+        assert!(stored_id.is_some(), "Group metadata should persist");
+
+        let stored_group_id = stored_id.unwrap();
+
+        // Load the group (as connect_to_group would do)
+        let alice_group2 = crate::crypto::load_group_from_storage(&mls_provider, &GroupId::from_slice(&stored_group_id)).unwrap();
+
+        assert!(alice_group2.is_some(), "Group should exist in storage");
+        let loaded_group = alice_group2.unwrap();
+
+        // Verify: same group ID
+        assert_eq!(
+            loaded_group.group_id(),
+            &alice_group1_id,
+            "Reconnected group should have same ID"
+        );
+
+        // Verify: same epoch (state preserved) - THIS IS THE CRITICAL FIX
+        assert_eq!(
+            loaded_group.epoch(),
+            alice_epoch_1,
+            "Reconnected group should have same epoch - this is the critical fix!"
+        );
+    }
+
 }

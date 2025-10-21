@@ -172,6 +172,30 @@ pub fn export_ratchet_tree(group: &MlsGroup) -> RatchetTreeIn {
     group.export_ratchet_tree().into()
 }
 
+/// Load an MLS group from storage by its group ID
+///
+/// This retrieves a previously created and persisted MLS group from the storage provider.
+/// The OpenMLS storage provider automatically persists all group state (epoch, secrets,
+/// ratcheting tree, credentials) when the group is modified. This function reconstructs
+/// the full MlsGroup instance from that persisted state.
+///
+/// # Arguments
+/// * `provider` - The MLS provider containing the storage backend
+/// * `group_id` - The ID of the group to load
+///
+/// # Returns
+/// `Ok(Some(group))` if the group exists and was loaded successfully
+/// `Ok(None)` if the group does not exist in storage
+/// `Err(...)` if there was an error loading the group
+pub fn load_group_from_storage(
+    provider: &impl OpenMlsProvider,
+    group_id: &GroupId,
+) -> Result<Option<MlsGroup>> {
+    MlsGroup::load(provider.storage(), group_id)
+        .map_err(|e| MlsError::OpenMls(format!("Failed to load group: {}", e)).into())
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,5 +434,326 @@ mod tests {
             }
             _ => panic!("Expected application message from Carol"),
         }
+    }
+
+    #[test]
+    fn test_group_persistence_through_metadata() {
+        use tempfile::tempdir;
+        use crate::provider::MlsProvider;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("groups.db");
+
+        // === Session 1: Create group and store metadata ===
+        let provider1 = MlsProvider::new(&db_path).unwrap();
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let group_id = alice_group_1.group_id().as_slice().to_vec();
+
+        // Store the group ID in metadata (simulating client storing group mapping)
+        let group_id_key = "alice:testgroup";
+        provider1.save_group_name(group_id_key, &group_id).unwrap();
+
+        // === Session 2: Verify metadata persists across provider instances ===
+        let provider2 = MlsProvider::new(&db_path).unwrap();
+
+        // Load the group ID from metadata
+        let loaded_group_id = provider2.load_group_by_name(group_id_key).unwrap();
+
+        assert!(
+            loaded_group_id.is_some(),
+            "Group ID should be stored in metadata"
+        );
+
+        let loaded_id = loaded_group_id.unwrap();
+        assert_eq!(
+            loaded_id, group_id,
+            "Loaded group ID should match original"
+        );
+    }
+
+    #[test]
+    fn test_group_id_metadata_persists_with_member_addition() {
+        use tempfile::tempdir;
+        use crate::provider::MlsProvider;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("groups.db");
+
+        // === Session 1: Create group and add Bob ===
+        let provider1 = MlsProvider::new(&db_path).unwrap();
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let group_id = alice_group_1.group_id().as_slice().to_vec();
+
+        // Bob generates his key package
+        let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
+        let bob_key_package = generate_key_package_bundle(&bob_cred, &bob_key, &provider1).unwrap();
+
+        // Alice adds Bob to the group
+        let (_commit, _welcome_msg, _) = add_members(
+            &mut alice_group_1,
+            &provider1,
+            &alice_key,
+            &[bob_key_package.key_package()],
+        )
+        .unwrap();
+        merge_pending_commit(&mut alice_group_1, &provider1).unwrap();
+
+        let group_id_key = "alice:testgroup";
+        provider1.save_group_name(group_id_key, &group_id).unwrap();
+
+        // === Session 2: Verify group metadata persists ===
+        let provider2 = MlsProvider::new(&db_path).unwrap();
+
+        // Load group ID from metadata - this is the key persistence mechanism
+        let loaded_id = provider2.load_group_by_name(group_id_key).unwrap();
+        assert!(loaded_id.is_some(), "Group ID should persist in metadata");
+
+        assert_eq!(
+            loaded_id.unwrap(),
+            group_id,
+            "Group ID should match after member addition - metadata persistence works"
+        );
+    }
+
+    #[test]
+    fn test_group_id_metadata_for_multiple_groups() {
+        use tempfile::tempdir;
+        use crate::provider::MlsProvider;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("groups.db");
+
+        let provider1 = MlsProvider::new(&db_path).unwrap();
+
+        // Create and store first group
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let group1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let group1_id = group1.group_id().as_slice().to_vec();
+        provider1.save_group_name("alice:group1", &group1_id).unwrap();
+
+        // Create and store second group
+        let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
+        let group2 = create_group_with_config(&bob_cred, &bob_key, &provider1).unwrap();
+        let group2_id = group2.group_id().as_slice().to_vec();
+        provider1.save_group_name("bob:group2", &group2_id).unwrap();
+
+        // === Session 2: Load both groups via metadata ===
+        let provider2 = MlsProvider::new(&db_path).unwrap();
+
+        let loaded1 = provider2.load_group_by_name("alice:group1").unwrap();
+        let loaded2 = provider2.load_group_by_name("bob:group2").unwrap();
+
+        assert_eq!(loaded1.unwrap(), group1_id, "Group 1 metadata should persist");
+        assert_eq!(loaded2.unwrap(), group2_id, "Group 2 metadata should persist");
+    }
+
+    #[test]
+    fn test_group_metadata_persists_during_activity() {
+        use tempfile::tempdir;
+        use crate::provider::MlsProvider;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("groups.db");
+
+        // === Session 1: Create group and perform messaging operations ===
+        let provider1 = MlsProvider::new(&db_path).unwrap();
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let group_id_1 = alice_group_1.group_id().as_slice().to_vec();
+
+        // Perform some group operations (send message)
+        let msg = b"Hello from session 1";
+        let _encrypted = create_application_message(&mut alice_group_1, &provider1, &alice_key, msg).unwrap();
+
+        // Store group ID mapping in metadata
+        provider1.save_group_name("alice:testgroup", &group_id_1).unwrap();
+
+        // === Session 2: Verify metadata persists across sessions ===
+        let provider2 = MlsProvider::new(&db_path).unwrap();
+
+        // Load group ID from metadata - verify it persists even after messaging
+        let loaded_id = provider2.load_group_by_name("alice:testgroup").unwrap();
+        assert!(
+            loaded_id.is_some(),
+            "Group ID should persist in metadata after messaging activity"
+        );
+
+        let loaded_group_id = loaded_id.unwrap();
+        assert_eq!(
+            loaded_group_id,
+            group_id_1,
+            "Loaded group ID from metadata should match original group ID"
+        );
+
+        // Note: The OpenMLS storage provider will have persisted the actual group state,
+        // but create_group_with_config() always creates a NEW group.
+        // The key insight is that we use metadata storage to maintain the group ID mapping
+        // so we know which group belongs to which (user, group_name) pair.
+        // On reconnection, we use that metadata to know which group ID to work with.
+    }
+
+    #[test]
+    fn test_load_group_from_storage_basic() {
+        use tempfile::tempdir;
+        use crate::provider::MlsProvider;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("groups.db");
+
+        // === Session 1: Create group and persist state ===
+        let provider1 = MlsProvider::new(&db_path).unwrap();
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let group_id = alice_group_1.group_id().clone();
+
+        // Send a message to modify state
+        let msg = b"First message";
+        let _encrypted_msg = create_application_message(&mut alice_group_1, &provider1, &alice_key, msg).unwrap();
+
+        let epoch_1 = alice_group_1.epoch();
+
+        // === Session 2: Load the group from storage ===
+        let provider2 = MlsProvider::new(&db_path).unwrap();
+
+        // Load the group using MlsGroup::load API
+        let loaded_group = load_group_from_storage(&provider2, &group_id).unwrap();
+        assert!(loaded_group.is_some(), "Group should exist in storage");
+
+        let alice_group_2 = loaded_group.unwrap();
+
+        // Verify the loaded group has the same state
+        assert_eq!(
+            alice_group_2.group_id(),
+            &group_id,
+            "Loaded group should have same group ID"
+        );
+
+        assert_eq!(
+            alice_group_2.epoch(),
+            epoch_1,
+            "Loaded group should have same epoch (state persisted)"
+        );
+    }
+
+    #[test]
+    fn test_load_group_after_member_additions() {
+        use tempfile::tempdir;
+        use crate::provider::MlsProvider;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("groups.db");
+
+        // === Session 1: Create group and add members ===
+        let provider1 = MlsProvider::new(&db_path).unwrap();
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let group_id = alice_group_1.group_id().clone();
+
+        // Initial state - just Alice
+        assert_eq!(alice_group_1.members().count(), 1, "Group should start with just Alice");
+
+        // Generate key packages for Bob and Carol
+        let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
+        let bob_key_package = generate_key_package_bundle(&bob_cred, &bob_key, &provider1).unwrap();
+
+        let (carol_cred, carol_key) = generate_credential_with_key("carol").unwrap();
+        let carol_key_package = generate_key_package_bundle(&carol_cred, &carol_key, &provider1).unwrap();
+
+        // Add Bob
+        let (_commit_bob, _welcome_bob, _) = add_members(
+            &mut alice_group_1,
+            &provider1,
+            &alice_key,
+            &[bob_key_package.key_package()],
+        )
+        .unwrap();
+        merge_pending_commit(&mut alice_group_1, &provider1).unwrap();
+
+        // Add Carol
+        let (_commit_carol, _welcome_carol, _) = add_members(
+            &mut alice_group_1,
+            &provider1,
+            &alice_key,
+            &[carol_key_package.key_package()],
+        )
+        .unwrap();
+        merge_pending_commit(&mut alice_group_1, &provider1).unwrap();
+
+        let epoch_after_adds = alice_group_1.epoch();
+
+        // === Session 2: Load group and verify member state persists ===
+        let provider2 = MlsProvider::new(&db_path).unwrap();
+
+        let loaded_group = load_group_from_storage(&provider2, &group_id).unwrap();
+        assert!(loaded_group.is_some(), "Group should exist in storage");
+
+        let alice_group_2 = loaded_group.unwrap();
+
+        // Verify group loaded correctly
+        assert_eq!(alice_group_2.group_id(), &group_id, "Group ID should match");
+        assert_eq!(alice_group_2.epoch(), epoch_after_adds, "Epoch should reflect member additions");
+        assert_eq!(alice_group_2.members().count(), 3, "All members should be present after load");
+    }
+
+    #[test]
+    fn test_load_group_across_multiple_sessions() {
+        use tempfile::tempdir;
+        use crate::provider::MlsProvider;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("groups.db");
+
+        // === Session 1: Create group and add member (epoch advances) ===
+        let provider1 = MlsProvider::new(&db_path).unwrap();
+        let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
+        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let group_id = alice_group_1.group_id().clone();
+        let epoch_initial = alice_group_1.epoch();
+
+        // Add Bob (epoch advances)
+        let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
+        let bob_key_package = generate_key_package_bundle(&bob_cred, &bob_key, &provider1).unwrap();
+        let (_commit, _welcome, _) = add_members(
+            &mut alice_group_1,
+            &provider1,
+            &alice_key,
+            &[bob_key_package.key_package()],
+        ).unwrap();
+        merge_pending_commit(&mut alice_group_1, &provider1).unwrap();
+        let epoch_1 = alice_group_1.epoch();
+
+        // === Session 2: Load and add another member (epoch advances again) ===
+        let provider2 = MlsProvider::new(&db_path).unwrap();
+        let mut alice_group_2 = load_group_from_storage(&provider2, &group_id)
+            .unwrap()
+            .expect("Group should exist");
+
+        assert_eq!(alice_group_2.epoch(), epoch_1, "Session 2 should load at session 1 epoch");
+        assert!(epoch_1 > epoch_initial, "Epoch should have advanced after adding Bob");
+
+        // Add Carol (epoch advances in session 2)
+        let (carol_cred, carol_key) = generate_credential_with_key("carol").unwrap();
+        let carol_key_package = generate_key_package_bundle(&carol_cred, &carol_key, &provider2).unwrap();
+        let (_commit, _welcome, _) = add_members(
+            &mut alice_group_2,
+            &provider2,
+            &alice_key,
+            &[carol_key_package.key_package()],
+        ).unwrap();
+        merge_pending_commit(&mut alice_group_2, &provider2).unwrap();
+        let epoch_2 = alice_group_2.epoch();
+
+        // === Session 3: Verify all state persists ===
+        let provider3 = MlsProvider::new(&db_path).unwrap();
+        let alice_group_3 = load_group_from_storage(&provider3, &group_id)
+            .unwrap()
+            .expect("Group should exist");
+
+        assert_eq!(alice_group_3.group_id(), &group_id, "Group ID persists");
+        assert_eq!(alice_group_3.epoch(), epoch_2, "Session 3 should load at session 2 epoch");
+        assert_eq!(alice_group_3.members().count(), 3, "All members should be present");
+        assert!(epoch_2 > epoch_1, "Epoch should advance with member addition in session 2");
     }
 }
