@@ -7,6 +7,7 @@ pub mod client;
 pub mod crypto;
 pub mod error;
 pub mod identity;
+pub mod message_processing;
 pub mod models;
 pub mod provider;
 pub mod storage;
