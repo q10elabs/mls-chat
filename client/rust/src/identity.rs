@@ -116,12 +116,8 @@ impl IdentityManager {
         let public_key_blob = signature_keys.to_public_vec();
 
         // Store identity in metadata store with public key
-        metadata_store.save_identity(
-            username,
-            &public_key_blob, // We store public key for lookup
-            &[], // credential_blob (not needed - we regenerate from username)
-            &public_key_blob,
-        )?;
+        // The public key is used to look up the signature key in OpenMLS provider storage
+        metadata_store.save_identity(username, &public_key_blob)?;
 
         let credential_with_key = CredentialWithKey {
             credential: credential.into(),
