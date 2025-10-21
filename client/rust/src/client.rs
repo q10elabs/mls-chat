@@ -8,6 +8,7 @@ use crate::cli::{format_control, format_message, run_input_loop};
 use crate::crypto;
 use crate::error::{Result, ClientError};
 use crate::identity::IdentityManager;
+use crate::message_processing::{process_application_message, format_display_message};
 use crate::models::{Command, Identity, MlsMessageEnvelope};
 use crate::provider::MlsProvider;
 use crate::storage::LocalStore;
@@ -326,45 +327,28 @@ impl MlsClient {
     pub async fn process_incoming(&mut self) -> Result<()> {
         if let Some(websocket) = &mut self.websocket {
             if let Some(envelope) = websocket.next_message().await? {
-                // Decode base64-encoded MLS message
-                match general_purpose::STANDARD.decode(&envelope.encrypted_content) {
-                    Ok(encrypted_bytes) => {
-                        // Deserialize the MLS message
-                        match openmls::prelude::MlsMessageIn::tls_deserialize(&mut encrypted_bytes.as_slice()) {
-                            Ok(message_in) => {
-                                // Process the message using the persistent group state
-                                if let Some(group) = &mut self.mls_group {
-                                    match crypto::process_message(group, &self.mls_provider, &message_in) {
-                                        Ok(processed_msg) => {
-                                            // Extract the plaintext from the application message
-                                            use openmls::prelude::ProcessedMessageContent;
-                                            match processed_msg.content() {
-                                                ProcessedMessageContent::ApplicationMessage(_app_msg) => {
-                                                    // Message decrypted successfully
-                                                    // Note: In a production system, you'd extract the actual plaintext bytes
-                                                    println!("{}", format_message(&envelope.group_id, &envelope.sender, "[message received]"));
-                                                }
-                                                _ => {
-                                                    log::debug!("Received non-application message type");
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            log::error!("Failed to process/decrypt message: {:?}", e);
-                                        }
-                                    }
-                                } else {
-                                    log::error!("Cannot process incoming message: group not connected");
-                                }
-                            }
-                            Err(e) => {
-                                log::error!("Failed to deserialize MLS message: {}", e);
-                            }
+                // Use the dedicated message processing module
+                if let Some(group) = &mut self.mls_group {
+                    match process_application_message(
+                        &envelope.sender,
+                        &envelope.group_id,
+                        &envelope.encrypted_content,
+                        group,
+                        &self.mls_provider,
+                    ).await {
+                        Ok(Some(decrypted_text)) => {
+                            println!("{}", format_display_message(&envelope.group_id, &envelope.sender, &decrypted_text));
+                        }
+                        Ok(None) => {
+                            log::debug!("Received non-application message type");
+                        }
+                        Err(e) => {
+                            log::error!("Failed to process message: {:?}", e);
+                            println!("{}", format_display_message(&envelope.group_id, &envelope.sender, "[decryption failed]"));
                         }
                     }
-                    Err(e) => {
-                        log::error!("Failed to decode base64 message: {}", e);
-                    }
+                } else {
+                    log::error!("Cannot process incoming message: group not connected");
                 }
             }
         }
@@ -389,37 +373,25 @@ impl MlsClient {
                         group_id,
                         encrypted_content,
                     } => {
-                        // Decode and process application message
-                        match general_purpose::STANDARD.decode(&encrypted_content) {
-                            Ok(encrypted_bytes) => {
-                                match openmls::prelude::MlsMessageIn::tls_deserialize(&mut encrypted_bytes.as_slice()) {
-                                    Ok(message_in) => {
-                                        if let Some(group) = &mut self.mls_group {
-                                            match crypto::process_message(group, &self.mls_provider, &message_in) {
-                                                Ok(processed_msg) => {
-                                                    use openmls::prelude::ProcessedMessageContent;
-                                                    match processed_msg.content() {
-                                                        ProcessedMessageContent::ApplicationMessage(_app_msg) => {
-                                                            println!("{}", format_message(&group_id, &sender, "[decrypted message]"));
-                                                        }
-                                                        _ => {
-                                                            log::debug!("Received non-application message in envelope");
-                                                        }
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    log::error!("Failed to process message: {}", e);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::error!("Failed to deserialize message: {}", e);
-                                    }
+                        // Use the dedicated message processing module
+                        if let Some(group) = &mut self.mls_group {
+                            match process_application_message(
+                                &sender,
+                                &group_id,
+                                &encrypted_content,
+                                group,
+                                &self.mls_provider,
+                            ).await {
+                                Ok(Some(decrypted_text)) => {
+                                    println!("{}", format_display_message(&group_id, &sender, &decrypted_text));
                                 }
-                            }
-                            Err(e) => {
-                                log::error!("Failed to decode message: {}", e);
+                                Ok(None) => {
+                                    log::debug!("Received non-application message in envelope");
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to process message: {}", e);
+                                    println!("{}", format_display_message(&group_id, &sender, "[decryption failed]"));
+                                }
                             }
                         }
                     }
@@ -1024,5 +996,6 @@ mod tests {
     }
 
 }
+
 
 
