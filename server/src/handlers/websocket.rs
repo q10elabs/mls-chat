@@ -241,20 +241,27 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
                                 "welcome" => {
                                     if let Some(welcome_blob) = value.get("welcome_blob").and_then(|w| w.as_str()) {
                                         if let Some(inviter) = value.get("inviter").and_then(|i| i.as_str()) {
-                                            let server = self.server.clone();
-                                            let inviter = inviter.to_string();
-                                            let welcome_blob = welcome_blob.to_string();
-                                            actix::spawn(async move {
-                                                let msg = json!({
-                                                    "type": "welcome",
-                                                    "inviter": inviter,
-                                                    "welcome_blob": welcome_blob,
-                                                    "ratchet_tree_blob": ""  // Included for completeness
-                                                })
-                                                .to_string();
-                                                // Welcome messages don't persist, just broadcast to inviter
-                                                server.broadcast_to_group("welcome", &msg).await;
-                                            });
+                                            if let Some(invitee) = value.get("invitee").and_then(|i| i.as_str()) {
+                                                if let Some(ratchet_tree) = value.get("ratchet_tree_blob").and_then(|r| r.as_str()) {
+                                                    let server = self.server.clone();
+                                                    let inviter = inviter.to_string();
+                                                    let invitee = invitee.to_string();
+                                                    let welcome_blob = welcome_blob.to_string();
+                                                    let ratchet_tree = ratchet_tree.to_string();
+                                                    actix::spawn(async move {
+                                                        let msg = json!({
+                                                            "type": "welcome",
+                                                            "inviter": inviter,
+                                                            "invitee": invitee.clone(),
+                                                            "welcome_blob": welcome_blob,
+                                                            "ratchet_tree_blob": ratchet_tree
+                                                        })
+                                                        .to_string();
+                                                        // Send Welcome message directly to the invitee
+                                                        server.broadcast_to_group(&invitee, &msg).await;
+                                                    });
+                                                }
+                                            }
                                         }
                                     }
                                 }

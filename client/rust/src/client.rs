@@ -302,10 +302,19 @@ impl MlsClient {
 
         // Connect WebSocket for real-time messaging
         self.websocket = Some(MessageHandler::connect(&self.server_url, &self.username).await?);
+
+        // Subscribe to both the group (for group messages) and username (for direct Welcome messages)
         self.websocket
             .as_ref()
             .unwrap()
             .subscribe_to_group(&self.group_name)
+            .await?;
+
+        // Also subscribe to username for receiving direct messages (e.g., Welcome from inviter)
+        self.websocket
+            .as_ref()
+            .unwrap()
+            .subscribe_to_group(&self.username)
             .await?;
 
         Ok(())
@@ -434,6 +443,7 @@ impl MlsClient {
                     // Create and send Welcome envelope (no group_id - direct to invitee)
                     let welcome_envelope = MlsMessageEnvelope::WelcomeMessage {
                         inviter: self.username.clone(),
+                        invitee: invitee_username.to_string(),
                         welcome_blob: welcome_b64,
                         ratchet_tree_blob: ratchet_tree_b64,
                     };
@@ -998,6 +1008,7 @@ impl MlsClient {
             }
             MlsMessageEnvelope::WelcomeMessage {
                 inviter,
+                invitee: _,
                 welcome_blob,
                 ratchet_tree_blob,
             } => {

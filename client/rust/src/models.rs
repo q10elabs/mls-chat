@@ -35,6 +35,7 @@ pub enum MlsMessageEnvelope {
     #[serde(rename = "welcome")]
     WelcomeMessage {
         inviter: String,
+        invitee: String,  // Username of the person being invited (for server routing)
         welcome_blob: String,  // TLS-serialized Welcome message (base64)
         ratchet_tree_blob: String,  // Exported ratchet tree (base64)
     },
@@ -144,6 +145,7 @@ mod tests {
     fn test_welcome_message_envelope_serialization() {
         let envelope = MlsMessageEnvelope::WelcomeMessage {
             inviter: "alice".to_string(),
+            invitee: "bob".to_string(),
             welcome_blob: "base64welcomeblob".to_string(),
             ratchet_tree_blob: "base64ratchettree".to_string(),
         };
@@ -151,6 +153,7 @@ mod tests {
         let json = serde_json::to_string(&envelope).unwrap();
         assert!(json.contains("\"type\":\"welcome\""));
         assert!(json.contains("\"inviter\":\"alice\""));
+        assert!(json.contains("\"invitee\":\"bob\""));
         // Verify no group_id in the serialized form
         assert!(!json.contains("group_id"));
 
@@ -177,7 +180,7 @@ mod tests {
     #[test]
     fn test_envelope_type_discrimination() {
         let app_json = r#"{"type":"application","sender":"alice","group_id":"g1","encrypted_content":"data"}"#;
-        let welcome_json = r#"{"type":"welcome","inviter":"alice","welcome_blob":"w","ratchet_tree_blob":"rt"}"#;
+        let welcome_json = r#"{"type":"welcome","inviter":"alice","invitee":"bob","welcome_blob":"w","ratchet_tree_blob":"rt"}"#;
         let commit_json = r#"{"type":"commit","group_id":"g1","sender":"alice","commit_blob":"c"}"#;
 
         let app: MlsMessageEnvelope = serde_json::from_str(app_json).unwrap();

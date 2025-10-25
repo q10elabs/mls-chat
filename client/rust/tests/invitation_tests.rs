@@ -84,6 +84,7 @@ async fn test_two_party_invitation_alice_invites_bob() {
 fn test_welcome_message_envelope_structure() {
     let welcome_envelope = MlsMessageEnvelope::WelcomeMessage {
         inviter: "alice".to_string(),
+        invitee: "bob".to_string(),
         welcome_blob: "base64welcomeblob".to_string(),
         ratchet_tree_blob: "base64ratchettree".to_string(),
     };
@@ -202,7 +203,7 @@ fn test_application_message_envelope_structure() {
 fn test_envelope_message_type_routing() {
     let messages = vec![
         (r#"{"type":"application","sender":"alice","group_id":"g1","encrypted_content":"data"}"#, "application"),
-        (r#"{"type":"welcome","group_id":"g1","inviter":"alice","welcome_blob":"w","ratchet_tree_blob":"rt"}"#, "welcome"),
+        (r#"{"type":"welcome","inviter":"alice","invitee":"bob","welcome_blob":"w","ratchet_tree_blob":"rt"}"#, "welcome"),
         (r#"{"type":"commit","group_id":"g1","sender":"alice","commit_blob":"c"}"#, "commit"),
     ];
 
@@ -292,6 +293,7 @@ async fn test_invitation_to_nonexistent_user_fails() {
 fn test_welcome_message_completeness() {
     let welcome = MlsMessageEnvelope::WelcomeMessage {
         inviter: "alice".to_string(),
+        invitee: "bob".to_string(),
         welcome_blob: "SerializedWelcomeFromAlice".to_string(),
         ratchet_tree_blob: "RatchetTreeForBob".to_string(),
     };
@@ -299,11 +301,13 @@ fn test_welcome_message_completeness() {
     match welcome {
         MlsMessageEnvelope::WelcomeMessage {
             inviter,
+            invitee,
             welcome_blob,
             ratchet_tree_blob,
         } => {
             // All fields should be present and non-empty for real messages
             assert!(!inviter.is_empty(), "inviter required");
+            assert!(!invitee.is_empty(), "invitee required");
             assert!(!welcome_blob.is_empty(), "welcome_blob required");
             assert!(!ratchet_tree_blob.is_empty(), "ratchet_tree_blob required");
         }
