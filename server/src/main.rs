@@ -14,6 +14,8 @@ use actix_web::web;
 use config::Config;
 use handlers::WsServer;
 use std::sync::Arc;
+use std::fs;
+use std::process;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -26,6 +28,13 @@ async fn main() -> std::io::Result<()> {
     log::info!("Starting MLS Chat Server");
     log::info!("Database: {:?}", config.database);
     log::info!("Port: {}", config.port);
+
+    // Write PID file if specified
+    if let Some(pidfile) = &config.pidfile {
+        let pid = process::id().to_string();
+        fs::write(pidfile, pid).expect("Failed to write PID file");
+        log::info!("PID file written to: {:?}", pidfile);
+    }
 
     // Initialize database
     let pool = db::create_pool(config.database.to_str().unwrap()).expect("Failed to create database pool");

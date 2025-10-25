@@ -11,7 +11,9 @@
 # 6. Cleans up all temporary files
 
 set timeout 10
-set test_dir "/home/kena/src/quintessence/mls-chat/client/rust/e2e_tests"
+set test_dir [file dirname $argv0]
+cd $test_dir
+set test_dir [pwd]
 
 # Step 0: Setup - Create fresh directories and clean old state
 puts "=== Step 0: Setup - Creating fresh directories ==="
@@ -21,6 +23,7 @@ set server_work_dir "$test_dir/.server_work"
 set alice_config_dir "$test_dir/.alice_config"
 set bob_config_dir "$test_dir/.bob_config"
 set server_db "$server_work_dir/chatserver.db"
+set server_pidfile "$server_work_dir/server.pid"
 set server_port 14000
 
 # Remove old directories
@@ -38,136 +41,125 @@ puts "  Server work dir: $server_work_dir"
 puts "  Alice config: $alice_config_dir"
 puts "  Bob config: $bob_config_dir"
 puts "  Server database: $server_db"
+puts "  Server PID file: $server_pidfile"
+
+# Define a cleanup function to kill the server on exit
+proc cleanup_server {} {
+	global server_pidfile
+    if {[file exists $server_pidfile]} {
+        set pid [read [open $server_pidfile r]]
+        set pid [string trim $pid]
+        catch {exec kill -9 $pid}
+    }
+}
+
+proc eexpect {text} {
+	expect {
+		$text {}
+		timeout {
+			puts "Failed to receive expected message '$text'"
+			cleanup_server
+			exit 1
+		}
+	}
+}
+
 
 # Step 1: Start server with isolated database
 puts "\n=== Step 1: Starting server with isolated database ==="
-spawn bash -c "cd /home/kena/src/quintessence/mls-chat/server && RUST_LOG=info cargo run --quiet -- --port $server_port --database $server_work_dir/chatserver.db"
+spawn bash -c "cd ../../../server && RUST_LOG=info cargo run --quiet -- --port $server_port --database $server_db --pidfile $server_pidfile"
 set server_spawn_id $spawn_id
 
 # Wait for server to be ready
+expect -i $server_spawn_id "PID file written"
 expect -i $server_spawn_id "Starting HTTP server"
 puts "Server started on port $server_port"
 
-# Give server time to fully initialize
-after 2000
-
-# Define a cleanup function to kill the server on exit
-proc cleanup_server {port} {
-    catch {exec kill [exec pgrep -f "mls-chat-server.*$port"]}
-}
-
 # Step 2: Start Bob first to register his key package
 puts "\n=== Step 2: Starting Bob with isolated config ==="
-spawn bash -c "cd /home/kena/src/quintessence/mls-chat/client/rust && cargo run --quiet -- --server http://localhost:$server_port --config $bob_config_dir mygroup bob --verbose"
+spawn bash -c "cd .. && RUST_LOG=info cargo run --quiet -- --server http://localhost:$server_port --config $bob_config_dir mygroup bob"
 set bob_spawn_id $spawn_id
 
-expect -i $bob_spawn_id -timeout 10 {
+expect {
     "Type messages to send" {
         puts "Bob started and registered"
     }
     timeout {
         puts "✗ TIMEOUT: Bob failed to start"
-        cleanup_server $server_port
+        cleanup_server $server_pidfile
         exit 1
     }
 }
 
-# Let Bob fully initialize
-after 2000
-
 # Step 3: Start Alice with isolated config
 puts "\n=== Step 3: Starting Alice with isolated config ==="
-spawn bash -c "cd /home/kena/src/quintessence/mls-chat/client/rust && cargo run --quiet -- --server http://localhost:$server_port --config $alice_config_dir mygroup alice --verbose"
+spawn bash -c "cd .. && RUST_LOG=info cargo run --quiet -- --server http://localhost:$server_port --config $alice_config_dir mygroup alice"
 set alice_spawn_id $spawn_id
 
-expect -i $alice_spawn_id -timeout 10 {
+expect {
     "Type messages to send" {
         puts "Alice started and registered"
     }
     timeout {
         puts "✗ TIMEOUT: Alice failed to start"
-        cleanup_server $server_port
+        cleanup_server $server_pidfile
         exit 1
     }
 }
-
-# Let Alice fully initialize
-after 2000
 
 # Step 4: Alice invites Bob
 puts "\n=== Step 4: Alice invites Bob ==="
-send -i $alice_spawn_id "/invite bob\r"
+send "/invite bob\r"
 
-expect -i $alice_spawn_id -timeout 5 {
-    "invited bob" {
-        puts "✓ Alice successfully invited bob"
-    }
-    timeout {
-        puts "✗ TIMEOUT: Alice did not confirm invite"
-        cleanup_server $server_port
-        exit 1
-    }
-}
+eexpect "invited bob"
 
 # Step 5: Wait for Welcome message to be delivered and processed
-puts "\n=== Step 5: Waiting 3 seconds for Bob to receive Welcome ==="
-after 3000
+puts "\n=== Step 5: Waiting for Bob to receive Welcome ==="
+set spawn_id $bob_spawn_id
+eexpect "Successfully processed Welcome message from alice"
 
 # Step 6: Bob lists members to verify Welcome was processed
 puts "\n=== Step 6: Bob lists members (verify Welcome was processed) ==="
-send -i $bob_spawn_id "/list\r"
+send "/list\r"
 
-expect -i $bob_spawn_id -timeout 5 {
-    "alice" {
-        puts "✓ Bob sees alice in member list - Welcome was successfully processed!"
-    }
-    timeout {
-        puts "✗ TIMEOUT: Bob did not receive alice in member list"
-        cleanup_server $server_port
-        exit 1
-    }
-}
+eexpect "alice"
 
 # Step 7: Verify Alice also sees Bob after invite
 puts "\n=== Step 7: Alice lists members (should see bob) ==="
-send -i $alice_spawn_id "/list\r"
+set spawn_id $alice_spawn_id
+send "/list\r"
 
-expect -i $alice_spawn_id -timeout 5 {
-    "bob" {
-        puts "✓ Alice sees bob in member list"
-    }
-    timeout {
-        puts "⚠ Alice does not see bob (expected - depends on member tracking)"
-    }
-}
-
-after 1000
+eexpect "bob"
 
 # Step 8: Test messaging between Alice and Bob
 puts "\n=== Step 8: Testing message exchange ==="
-send -i $alice_spawn_id "Hello from Alice\r"
+send  "Hello from Alice\r"
 puts "Alice sent: Hello from Alice"
 
-after 2000
-
 # Check if Bob received it
-send -i $bob_spawn_id "/list\r"
-puts "Bob requested member list"
+set spawn_id $bob_spawn_id
+eexpect "Hello from Alice"
+puts "Bob received: Hello from Alice"
 
-after 1000
+send "Hello from Bob\r"
+puts "Bob sent: Hello from Bob"
+set spawn_id $alice_spawn_id
+eexpect "Hello from Bob"
+puts "Alice received: Hello from Bob"
+
 
 # Step 9: Cleanup
 puts "\n=== Step 9: Cleanup ==="
-send -i $alice_spawn_id "/quit\r"
-send -i $bob_spawn_id "/quit\r"
-
-after 1000
+set spawn_id $bob_spawn_id
+send "/quit\r"
+eexpect eeof
+set spawn_id $alice_spawn_id
+send "/quit\r"
+eexpect eeof
 
 # Kill server (always ensure it's killed, even on success)
 puts "Stopping server..."
-cleanup_server $server_port
-
-after 1000
+cleanup_server
 
 puts "\n=== ✓ Test complete ==="
 puts "State directories preserved for inspection:"

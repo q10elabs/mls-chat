@@ -15,6 +15,10 @@ pub struct Config {
     /// SQLite database file path (default: chatserver.db)
     #[arg(long, default_value = "chatserver.db")]
     pub database: PathBuf,
+
+    /// PID file path (optional) - write server PID to this file on startup
+    #[arg(long)]
+    pub pidfile: Option<PathBuf>,
 }
 
 impl Config {
