@@ -10,13 +10,13 @@ use mls_chat_client::{client::MlsClient, Result};
 #[command(name = "mls-client")]
 #[command(about = "MLS Chat Client - Secure group messaging")]
 struct Args {
-    /// Server URL (default: localhost:4000)
-    #[arg(long, default_value = "localhost:4000")]
+    /// Server URL (default: http://localhost:4000)
+    #[arg(long, default_value = "http://localhost:4000")]
     server: String,
-    
+
     /// Group name to join or create
     group_name: String,
-    
+
     /// Username for this client
     username: String,
 }

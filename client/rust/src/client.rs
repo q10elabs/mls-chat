@@ -140,23 +140,56 @@ impl MlsClient {
             self.username
         );
 
-        // Generate a KeyPackage for this user
-        let key_package_bundle = crypto::generate_key_package_bundle(
-            self.credential_with_key.as_ref().unwrap(),
-            self.signature_key.as_ref().unwrap(),
-            &self.mls_provider,
-        )?;
+        // Try to fetch existing key package from server (may exist from previous session)
+        let key_package_bytes = match self.api.get_user_key(&self.username).await {
+            Ok(remote_key_package) => {
+                // User exists on server - validate it's compatible with local identity
+                log::info!(
+                    "Found existing key package for {} on server, validating",
+                    self.username
+                );
 
-        // Serialize the KeyPackage using TLS codec (standard MLS wire format)
-        use tls_codec::Serialize;
-        let key_package_bytes = key_package_bundle
-            .key_package()
-            .tls_serialize_detached()
-            .map_err(|_e| crate::error::ClientError::Mls(
-                crate::error::MlsError::OpenMls("Failed to serialize key package".to_string())
-            ))?;
+                // Deserialize and validate the remote key package
+                match self.validate_remote_key_package(&remote_key_package) {
+                    Ok(()) => {
+                        log::info!(
+                            "Remote key package for {} is compatible with local identity",
+                            self.username
+                        );
+                        remote_key_package
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Remote key package for {} is incompatible with local identity: {}",
+                            self.username,
+                            e
+                        );
+                        return Err(e);
+                    }
+                }
+            }
+            Err(_) => {
+                // User doesn't exist - generate a new key package
+                log::info!("Generating new key package for {}", self.username);
 
-        // Register with server (idempotent) - sends the serialized KeyPackage
+                let key_package_bundle = crypto::generate_key_package_bundle(
+                    self.credential_with_key.as_ref().unwrap(),
+                    self.signature_key.as_ref().unwrap(),
+                    &self.mls_provider,
+                )?;
+
+                // Serialize the KeyPackage using TLS codec (standard MLS wire format)
+                use tls_codec::Serialize;
+                key_package_bundle
+                    .key_package()
+                    .tls_serialize_detached()
+                    .map_err(|_e| crate::error::ClientError::Mls(
+                        crate::error::MlsError::OpenMls("Failed to serialize key package".to_string())
+                    ))?
+            }
+        };
+
+        // Register with server (idempotent - 409 on duplicate is OK)
         self.api.register_user(&self.username, &key_package_bytes).await?;
 
         Ok(())
@@ -733,6 +766,94 @@ impl MlsClient {
         log::info!("KeyPackage security validation completed successfully");
 
         Ok(())
+    }
+
+    /// Validate that a remote key package is compatible with local identity
+    ///
+    /// Checks that the key package's credential matches the local credential
+    /// to ensure it was created with the same identity material.
+    ///
+    /// # Arguments
+    /// * `key_package_bytes` - The serialized TLS KeyPackage bytes from server
+    ///
+    /// # Errors
+    /// * Deserialization errors if bytes are not valid TLS-encoded KeyPackage
+    /// * MlsError if credential doesn't match local credential
+    fn validate_remote_key_package(&self, key_package_bytes: &[u8]) -> Result<()> {
+        use tls_codec::Deserialize;
+        use openmls::prelude::*;
+
+        // Deserialize the remote key package
+        let key_package_in = KeyPackageIn::tls_deserialize(&mut &key_package_bytes[..])
+            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(
+                format!("Failed to deserialize remote key package: {}", e)
+            )))?;
+
+        // Validate it's a valid KeyPackage (OpenMLS built-in validation)
+        let key_package = key_package_in
+            .validate(self.mls_provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(
+                format!("Remote key package validation failed: {}", e)
+            )))?;
+
+        // Extract credential from remote key package
+        let remote_credential = match key_package.leaf_node().credential().credential_type() {
+            CredentialType::Basic => {
+                BasicCredential::try_from(
+                    key_package.leaf_node().credential().clone()
+                ).map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(
+                    format!("Failed to extract remote credential: {}", e)
+                )))?
+            }
+            _ => {
+                return Err(ClientError::Mls(crate::error::MlsError::OpenMls(
+                    "Remote key package must use BasicCredential".to_string()
+                )).into());
+            }
+        };
+
+        // Extract credential from local credential_with_key
+        let local_credential_with_key = self.credential_with_key.as_ref()
+            .ok_or_else(|| ClientError::Config("Local credential not initialized".to_string()))?;
+
+        let local_credential = match local_credential_with_key.credential.credential_type() {
+            CredentialType::Basic => {
+                BasicCredential::try_from(
+                    local_credential_with_key.credential.clone()
+                ).map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(
+                    format!("Failed to extract local credential: {}", e)
+                )))?
+            }
+            _ => {
+                return Err(ClientError::Mls(crate::error::MlsError::OpenMls(
+                    "Local credential must be BasicCredential".to_string()
+                )).into());
+            }
+        };
+
+        // Compare credentials - must be identical (same identity bytes)
+        if remote_credential.identity() == local_credential.identity() {
+            log::debug!(
+                "Remote key package credential matches local identity: {}",
+                String::from_utf8_lossy(remote_credential.identity())
+            );
+            Ok(())
+        } else {
+            log::error!(
+                "SECURITY: Remote key package credential mismatch. \
+                 Remote: {}, Local: {}",
+                String::from_utf8_lossy(remote_credential.identity()),
+                String::from_utf8_lossy(local_credential.identity())
+            );
+            Err(ClientError::Mls(crate::error::MlsError::OpenMls(
+                format!(
+                    "Remote key package credential {} does not match local identity {}. \
+                    This indicates identity compromise or misconfiguration.",
+                    String::from_utf8_lossy(remote_credential.identity()),
+                    String::from_utf8_lossy(local_credential.identity())
+                )
+            )).into())
+        }
     }
 
     /// Run the main client loop

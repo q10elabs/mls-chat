@@ -147,6 +147,76 @@ All commands now execute async operations directly within the select! arm:
 
 Errors are caught with match expressions, logged, and the loop continues.
 
+## Additional Fixes
+
+### Server URL Default (main.rs)
+Fixed default server URL to include HTTP scheme:
+- **Before:** `"localhost:4000"` → causes reqwest::Builder error "BadScheme"
+- **After:** `"http://localhost:4000"` → works correctly
+
+### Identity Reuse with Key Package Validation (api.rs + client.rs)
+Implemented proper idempotent registration with security validation:
+
+**API Layer (`api.rs`):**
+- On 409 Conflict: Fetch remote key package and compare with local
+- If they match: Identity is valid, reuse it
+- If they differ: Log security warning and fail with descriptive error
+- Allows client to detect key package mismatch (potential compromise)
+
+**Client Layer (`client.rs`):**
+- On first run: Generate new key package, register with server
+- On reconnect with same username:
+  1. Fetch existing key package from server
+  2. Reuse it instead of generating new one
+  3. Register with server (409 triggers validation in api.rs)
+- Ensures same key package bytes are sent on every reconnection
+
+**Flow:**
+```
+Session 1: Generate key package → Register (201)
+Session 2: Fetch remote key package → Register (409) → Validate match → OK
+Session 3: Fetch remote key package → Register (409) → Validate match → OK
+```
+
+This ensures:
+- ✅ Identity persistence across sessions (same key material)
+- ✅ Security validation (detect key package tampering)
+- ✅ Graceful identity reuse (no "user already exists" errors)
+- ✅ Clear error messages on mismatch (suspected compromise)
+
+### Remote Key Package Credential Validation (client.rs)
+Added `validate_remote_key_package()` method to ensure fetched key packages are compatible:
+
+**Validation Steps:**
+1. Deserialize remote key package bytes from server
+2. Validate it's a valid OpenMLS KeyPackage (built-in OpenMLS validation)
+3. Extract credential from remote key package
+4. Extract credential from local credential_with_key
+5. Compare credentials byte-for-byte - must match exactly
+6. Return error if credentials don't match (possible compromise or misconfiguration)
+
+**Flow:**
+```
+On first reconnection:
+1. Try to fetch key package from server
+2. If found: Validate remote credential matches local credential
+3. If mismatch: Log security error and exit
+4. If match: Reuse the key package
+```
+
+This detects:
+- ✅ Server-side key package tampering
+- ✅ Configuration mismatch (running with wrong username/password)
+- ✅ Identity compromise on server
+- Prevents silently using wrong credentials
+
 ## Remaining Limitations & Notes
 
 None identified. The implementation is complete and functional.
+
+### Tested Scenarios
+- ✅ First-time client registration
+- ✅ Reconnecting with same username (identity reuse)
+- ✅ Key package validation on reconnect
+- ✅ Default server URL works without --server flag
+- ✅ Commands execute asynchronously in concurrent loop

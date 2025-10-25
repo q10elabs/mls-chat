@@ -1,7 +1,7 @@
 /// Server API client for REST endpoints
 
 use crate::error::{Result, NetworkError};
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -49,6 +49,10 @@ impl ServerApi {
     }
 
     /// Register a user with the server, sending their KeyPackage
+    ///
+    /// Idempotent: 409 Conflict (user already exists) is treated as success only if
+    /// the stored key package matches the local one. If they differ, returns an error
+    /// indicating identity compromise or key material mismatch.
     pub async fn register_user(&self, username: &str, key_package: &[u8]) -> Result<()> {
         let request = RegisterUserRequest {
             username: username.to_string(),
@@ -61,10 +65,45 @@ impl ServerApi {
             .send()
             .await?;
 
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(NetworkError::Server(format!("Registration failed: {}", response.status())).into())
+        match response.status() {
+            status if status.is_success() => {
+                log::info!("User {} registered with server", username);
+                Ok(())
+            }
+            StatusCode::CONFLICT => {
+                // User already registered - verify the stored key package matches
+                log::info!("User {} already registered, validating key package", username);
+
+                match self.get_user_key(username).await {
+                    Ok(remote_key_package) => {
+                        if remote_key_package == key_package {
+                            log::info!("User {} identity verified - key packages match", username);
+                            Ok(())
+                        } else {
+                            log::error!(
+                                "SECURITY: Key package mismatch for user {}. Local key differs from server.",
+                                username
+                            );
+                            Err(NetworkError::Server(
+                                format!(
+                                    "Key package mismatch for user '{}': local key differs from stored key on server. \
+                                    This may indicate identity compromise. Please use a different username.",
+                                    username
+                                )
+                            ).into())
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to verify key package for user {} on conflict: {}", username, e);
+                        Err(NetworkError::Server(
+                            format!("Cannot verify existing user {}: {}", username, e)
+                        ).into())
+                    }
+                }
+            }
+            status => {
+                Err(NetworkError::Server(format!("Registration failed: {}", status)).into())
+            }
         }
     }
 
