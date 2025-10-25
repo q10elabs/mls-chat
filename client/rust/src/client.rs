@@ -303,11 +303,16 @@ impl MlsClient {
         // Connect WebSocket for real-time messaging
         self.websocket = Some(MessageHandler::connect(&self.server_url, &self.username).await?);
 
-        // Subscribe to both the group (for group messages) and username (for direct Welcome messages)
+        // Subscribe to the group for receiving messages
+        // Must subscribe using the MLS group_id (base64-encoded), not the human-readable group name,
+        // because application messages are routed by group_id on the server.
+        let mls_group_id_b64 = general_purpose::STANDARD.encode(
+            self.group_id.as_ref().expect("Group ID must be set before subscribing")
+        );
         self.websocket
             .as_ref()
             .unwrap()
-            .subscribe_to_group(&self.group_name)
+            .subscribe_to_group(&mls_group_id_b64)
             .await?;
 
         // Also subscribe to username for receiving direct messages (e.g., Welcome from inviter)
@@ -604,7 +609,22 @@ impl MlsClient {
         self.group_id = Some(group_id);
         self.mls_group = Some(joined_group);
 
+        // === Step 8: Subscribe to the group to receive encrypted messages ===
+        // After accepting Welcome, the client must subscribe to the group's message broadcasts.
+        // Must subscribe using the MLS group_id (base64-encoded), not the human-readable group name,
+        // because application messages are routed by group_id on the server.
+        let mls_group_id_b64 = general_purpose::STANDARD.encode(&self.group_id.as_ref().unwrap());
+        self.websocket
+            .as_ref()
+            .ok_or_else(|| {
+                log::error!("WebSocket not available for group subscription");
+                ClientError::Config("WebSocket not connected".to_string())
+            })?
+            .subscribe_to_group(&mls_group_id_b64)
+            .await?;
+
         log::info!("Successfully joined group '{}' via Welcome message from {}", group_name, inviter);
+        log::info!("Subscribed to group '{}' for receiving messages", group_name);
 
         // Display user-friendly message using human-readable group name
         println!(
