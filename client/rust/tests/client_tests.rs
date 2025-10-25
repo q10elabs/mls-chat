@@ -114,22 +114,25 @@ async fn test_different_users_are_separate() {
     assert!(bob.get_identity().is_none());
 }
 
-/// Test 6: List members returns default with creator
+/// Test 6: List members returns empty when group not connected
 #[tokio::test]
 async fn test_list_members() {
     // Create client with temporary directory (no server dependency)
     let (client, _temp_dir) = create_test_client_no_init("http://localhost:4000", "alice", "group");
 
-    // List members should return creator by default (fallback when no data in store)
+    // Group is not connected yet, so member list should be empty
+    assert!(
+        !client.is_group_connected(),
+        "Client should not be connected to group"
+    );
+
+    // List members should return empty when group is not connected
     let members = client.list_members();
     assert!(
-        members.contains(&"alice".to_string()),
-        "Creator should be in member list, got: {:?}",
+        members.is_empty(),
+        "Should return empty list when group not connected, got: {:?}",
         members
     );
-    
-    // Should have at least the creator
-    assert!(!members.is_empty(), "Should have at least one member (creator)");
 }
 
 /// Test 7: Client can be created with various server URLs

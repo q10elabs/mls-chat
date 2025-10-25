@@ -152,27 +152,35 @@ pub async fn process_application_message(
 
 /// Format a message for display
 ///
+/// Displays messages in the format: #groupname <username> message
+/// The group_name should be human-readable (from GroupMetadata),
+/// NOT the base64-encoded MLS group ID.
+///
 /// # Arguments
-/// * `group_id` - ID of the group
+/// * `group_name` - Human-readable name of the group
 /// * `sender` - Username of the sender
 /// * `message` - The message content
 ///
 /// # Returns
-/// * Formatted message string
-pub fn format_display_message(group_id: &str, sender: &str, message: &str) -> String {
-    format!("#{} <{}> {}", group_id, sender, message)
+/// * Formatted message string in format: #groupname <username> message
+pub fn format_display_message(group_name: &str, sender: &str, message: &str) -> String {
+    format!("#{} <{}> {}", group_name, sender, message)
 }
 
 /// Format a control message for display
 ///
+/// Displays control messages in the format: #groupname action
+/// The group_name should be human-readable (from GroupMetadata),
+/// NOT the base64-encoded MLS group ID.
+///
 /// # Arguments
-/// * `group_id` - ID of the group
+/// * `group_name` - Human-readable name of the group
 /// * `action` - The action description
 ///
 /// # Returns
-/// * Formatted control message string
-pub fn format_control_message(group_id: &str, action: &str) -> String {
-    format!("#{} {}", group_id, action)
+/// * Formatted control message string in format: #groupname action
+pub fn format_control_message(group_name: &str, action: &str) -> String {
+    format!("#{} {}", group_name, action)
 }
 
 #[cfg(test)]

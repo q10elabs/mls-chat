@@ -406,12 +406,14 @@ impl MlsClient {
                         }
                     }
                     MlsMessageEnvelope::CommitMessage {
-                        group_id,
+                        group_id: _group_id_b64,
                         sender,
                         commit_blob,
                     } => {
                         // Process Commit message
-                        log::info!("Received Commit from {} (group: {})", sender, group_id);
+                        // Note: group_id in envelope is base64-encoded MLS group ID
+                        // We use self.group_name (human-readable) for display
+                        log::info!("Received Commit from {} for group {}", sender, self.group_name);
 
                         match general_purpose::STANDARD.decode(&commit_blob) {
                             Ok(commit_bytes) => {
@@ -420,9 +422,10 @@ impl MlsClient {
                                         if let Some(group) = &mut self.mls_group {
                                             match crypto::process_message(group, &self.mls_provider, &commit_message_in) {
                                                 Ok(_processed_commit) => {
+                                                    // Use human-readable group_name for display (not base64 group_id)
                                                     println!(
                                                         "{}",
-                                                        format_control(&group_id, &format!("{} updated the group", sender))
+                                                        format_display_message(&self.group_name, &sender, "[updated group]")
                                                     );
                                                 }
                                                 Err(e) => {
@@ -572,74 +575,120 @@ impl MlsClient {
     /// Called when a new member receives a Welcome envelope from the inviter.
     /// This joins the user to an existing group via the Welcome message.
     ///
+    /// ## Implementation Details:
+    ///
+    /// The Welcome message contains encrypted group metadata (GroupContext extensions)
+    /// which includes the authoritative group name. This is the "source of truth" for
+    /// the group name (not the CLI argument or message envelope which could differ).
+    ///
+    /// The flow is:
+    /// 1. Deserialize Welcome message from TLS bytes
+    /// 2. Process Welcome with ratchet tree to create joined_group
+    /// 3. Extract group metadata from joined_group's encrypted GroupContext
+    /// 4. Update in-memory state (group_name, group_id, mls_group)
+    /// 5. Store the group_id mapping for persistence
+    ///
     /// # Arguments
-    /// * `group_name` - Name of the group being joined
     /// * `inviter` - Username of who invited this user
     /// * `welcome_blob_b64` - Base64-encoded TLS-serialized Welcome message
     /// * `ratchet_tree_blob_b64` - Base64-encoded ratchet tree
     ///
     /// # Errors
-    /// * Decoding errors (base64, TLS deserialization)
+    /// * Decoding errors (base64 decoding)
+    /// * TLS deserialization errors
     /// * MLS Welcome processing errors
-    /// * Storage errors
+    /// * Missing group metadata in encrypted extensions
+    /// * Storage errors when saving group ID mapping
     pub async fn handle_welcome_message(
         &mut self,
         inviter: &str,
         welcome_blob_b64: &str,
         ratchet_tree_blob_b64: &str,
     ) -> Result<()> {
-        log::info!("Received Welcome message from {}", inviter);
+        log::info!("Processing Welcome message from {} to join a group", inviter);
 
-        // Decode Welcome message
+        // === Step 1: Decode and deserialize Welcome message ===
         let welcome_bytes = general_purpose::STANDARD
             .decode(welcome_blob_b64)
-            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to decode welcome: {}", e))))?;
+            .map_err(|e| {
+                log::error!("Failed to decode Welcome message from {}: {}", inviter, e);
+                ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to decode welcome: {}", e)))
+            })?;
 
         let welcome_message_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut welcome_bytes.as_slice())
-            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to deserialize welcome: {}", e))))?;
+            .map_err(|e| {
+                log::error!("Failed to deserialize Welcome message from {}: {}", inviter, e);
+                ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to deserialize welcome: {}", e)))
+            })?;
 
-        // Decode and deserialize ratchet tree
+        // === Step 2: Decode and deserialize ratchet tree ===
         let ratchet_tree_bytes = general_purpose::STANDARD
             .decode(ratchet_tree_blob_b64)
-            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to decode ratchet tree: {}", e))))?;
+            .map_err(|e| {
+                log::error!("Failed to decode ratchet tree from {}: {}", inviter, e);
+                ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to decode ratchet tree: {}", e)))
+            })?;
 
         let ratchet_tree: openmls::prelude::RatchetTreeIn = serde_json::from_slice(&ratchet_tree_bytes)
-            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to deserialize ratchet tree: {}", e))))?;
+            .map_err(|e| {
+                log::error!("Failed to deserialize ratchet tree from {}: {}", inviter, e);
+                ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to deserialize ratchet tree: {}", e)))
+            })?;
 
-        // Use stored credential for joining
-        if let Some(_credential_with_key) = &self.credential_with_key {
-            // Process the Welcome message to join the group
-            let join_config = openmls::prelude::MlsGroupJoinConfig::default();
-            let joined_group = crypto::process_welcome_message(
-                &self.mls_provider,
-                &join_config,
-                &welcome_message_in,
-                Some(ratchet_tree),
-            )?;
+        // === Step 3: Verify stored credential exists ===
+        // The credential is needed during Welcome processing (happens inside crypto::process_welcome_message)
+        let _credential_with_key = self.credential_with_key
+            .as_ref()
+            .ok_or_else(|| {
+                log::error!("Cannot join group: credential not initialized");
+                ClientError::Config("Credential not initialized".to_string())
+            })?;
 
-            // Extract group name from encrypted metadata
-            let metadata = crypto::extract_group_metadata(&joined_group)?
-                .ok_or_else(|| ClientError::Config("Missing group metadata in Welcome".to_string()))?;
+        // === Step 4: Process the Welcome message to create the group ===
+        let join_config = openmls::prelude::MlsGroupJoinConfig::default();
+        let joined_group = crypto::process_welcome_message(
+            &self.mls_provider,
+            &join_config,
+            &welcome_message_in,
+            Some(ratchet_tree),
+        )
+        .map_err(|e| {
+            log::error!("Failed to process Welcome message from {}: {}", inviter, e);
+            e
+        })?;
 
-            // Store the group ID mapping with the authoritative group name
-            let group_id = joined_group.group_id().as_slice().to_vec();
-            let group_id_key = format!("{}:{}", self.username, &metadata.name);
-            self.mls_provider.save_group_name(&group_id_key, &group_id)?;
+        // === Step 5: Extract group name from encrypted metadata ===
+        // The group name is stored in GroupContext extensions (encrypted in group state)
+        // This is the authoritative source of the group name
+        let metadata = crypto::extract_group_metadata(&joined_group)?
+            .ok_or_else(|| {
+                log::error!("Welcome message missing group metadata - cannot determine group name");
+                ClientError::Config("Missing group metadata in Welcome - inviter may be using incompatible client".to_string())
+            })?;
 
-            // Update in-memory state from authoritative encrypted source
-            self.group_name = metadata.name.clone();
-            self.group_id = Some(group_id);
-            self.mls_group = Some(joined_group);
+        let group_name = &metadata.name;
+        let group_id = joined_group.group_id().as_slice().to_vec();
 
-            log::info!("Successfully joined group {} via Welcome message", self.group_name);
+        // === Step 6: Store the group ID mapping for persistence ===
+        let group_id_key = format!("{}:{}", self.username, group_name);
+        self.mls_provider.save_group_name(&group_id_key, &group_id)
+            .map_err(|e| {
+                log::error!("Failed to store group ID mapping for {}: {}", group_name, e);
+                e
+            })?;
 
-            println!(
-                "{}",
-                format_control(&self.group_name, "you have been invited to this group")
-            );
-        } else {
-            return Err(ClientError::Config("Credential not initialized".to_string()).into());
-        }
+        // === Step 7: Update in-memory state from authoritative encrypted source ===
+        self.group_name = group_name.clone();
+        self.group_id = Some(group_id);
+        self.mls_group = Some(joined_group);
+
+        log::info!("Successfully joined group '{}' via Welcome message from {}", group_name, inviter);
+
+        // Display user-friendly message using human-readable group name
+        println!(
+            "{}",
+            format_control(group_name, &format!("you have been invited to join this group by {}", inviter))
+        );
 
         Ok(())
     }
