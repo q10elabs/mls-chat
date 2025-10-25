@@ -280,13 +280,6 @@ impl MlsClient {
 
                         self.group_id = Some(group_id);
                         self.mls_group = Some(group);
-
-                        // Store the initial member (creator) in metadata store
-                        self.metadata_store.save_group_members(
-                            &self.username,
-                            &self.group_name,
-                            &[self.username.clone()],
-                        )?;
                     }
                     }
                 }
@@ -654,9 +647,8 @@ impl MlsClient {
     /// List group members
     ///
     /// Returns the members from the actual MLS group state.
-    /// Falls back to metadata store if MLS group is not loaded.
+    /// The MLS group must be loaded for this to work.
     pub fn list_members(&self) -> Vec<String> {
-        // Try to get members from the actual MLS group state
         if let Some(group) = &self.mls_group {
             group
                 .members()
@@ -675,10 +667,8 @@ impl MlsClient {
                 })
                 .collect()
         } else {
-            // Fallback to metadata store if MLS group is not loaded
-            self.metadata_store
-                .get_group_members(&self.username, &self.group_name)
-                .unwrap_or_else(|_| vec![self.username.clone()])
+            // No MLS group loaded - return empty list
+            vec![]
         }
     }
 

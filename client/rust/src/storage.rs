@@ -2,14 +2,15 @@
 ///
 /// This module handles only application-level metadata storage.
 /// MLS group state is automatically managed by the OpenMlsProvider.
+/// Member lists are derived from MlsGroup state, not stored separately.
 
-use crate::error::{Result, StorageError, ClientError};
-use rusqlite::{Connection, OptionalExtension};
+use crate::error::Result;
+use rusqlite::Connection;
 use std::path::Path;
 
 /// Local storage manager for SQLite database
 ///
-/// Stores only application metadata (identities, group members).
+/// Stores only application metadata (identities).
 /// MLS group state is persisted transparently by the OpenMlsProvider.
 pub struct LocalStore {
     conn: Connection,
@@ -32,16 +33,6 @@ impl LocalStore {
                 public_key_blob BLOB NOT NULL,
                 created_at TEXT NOT NULL
             );
-
-            CREATE TABLE IF NOT EXISTS group_members (
-                username TEXT NOT NULL,
-                group_id TEXT NOT NULL,
-                members_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (username, group_id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(username);
             "#,
         )?;
         Ok(())
@@ -63,6 +54,7 @@ impl LocalStore {
 
     /// Load public key for a username (used for looking up stored signatures in OpenMLS provider)
     pub fn load_public_key(&self, username: &str) -> Result<Option<Vec<u8>>> {
+        use rusqlite::OptionalExtension;
         let mut stmt = self.conn.prepare(
             "SELECT public_key_blob FROM identities WHERE username = ?1"
         )?;
@@ -72,38 +64,6 @@ impl LocalStore {
         }).optional()?;
 
         Ok(result)
-    }
-
-    /// Save group members for a username and group
-    pub fn save_group_members(&self, username: &str, group_id: &str, members: &[String]) -> Result<()> {
-        let updated_at = chrono::Utc::now().to_rfc3339();
-        let members_json = serde_json::to_string(members)?;
-
-        self.conn.execute(
-            "INSERT OR REPLACE INTO group_members (username, group_id, members_json, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            (username, group_id, members_json, updated_at),
-        )?;
-
-        Ok(())
-    }
-
-    /// Get group members for a username and group
-    pub fn get_group_members(&self, username: &str, group_id: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT members_json FROM group_members WHERE username = ?1 AND group_id = ?2"
-        )?;
-
-        let result = stmt.query_row((username, group_id), |row| {
-            let json: String = row.get(0)?;
-            let members: Vec<String> = serde_json::from_str(&json)
-                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?;
-            Ok(members)
-        }).optional()?;
-
-        match result {
-            Some(members) => Ok(members),
-            None => Err(ClientError::Storage(StorageError::NoGroupMembers("No group members found".to_string())))
-        }
     }
 }
 
@@ -130,8 +90,6 @@ mod tests {
             .unwrap();
 
         assert!(tables.contains(&"identities".to_string()));
-        assert!(tables.contains(&"group_members".to_string()));
-        // Note: group_states table is no longer used (OpenMlsProvider handles it)
     }
 
     #[test]
@@ -156,19 +114,6 @@ mod tests {
 
         let result = store.load_public_key("nonexistent").unwrap();
         assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_save_and_get_group_members() {
-        let temp_dir = tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db");
-        let store = LocalStore::new(&db_path).unwrap();
-
-        let members = vec!["alice".to_string(), "bob".to_string()];
-        store.save_group_members("alice", "group1", &members).unwrap();
-
-        let loaded = store.get_group_members("alice", "group1").unwrap();
-        assert_eq!(loaded, members);
     }
 
     #[test]
