@@ -83,7 +83,8 @@ impl MlsClient {
         let metadata_store = LocalStore::new(&metadata_db_path)?;
 
         // MLS provider storage (handles all OpenMLS group state)
-        let mls_db_path = storage_dir.join("mls.db");
+        // Use per-user database to isolate credentials and group state
+        let mls_db_path = storage_dir.join(format!("mls-{}.db", username));
         let mls_provider = MlsProvider::new(&mls_db_path)?;
 
         let api = ServerApi::new(server_url);
