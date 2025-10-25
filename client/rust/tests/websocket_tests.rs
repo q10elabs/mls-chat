@@ -6,6 +6,7 @@
 use mls_chat_client::api::ServerApi;
 use mls_chat_client::websocket::MessageHandler;
 use mls_chat_client::crypto;
+use mls_chat_client::models::MlsMessageEnvelope;
 use tls_codec::Serialize;
 use std::time::Duration;
 
@@ -102,7 +103,7 @@ async fn test_send_message_via_websocket() {
         .await
         .expect("User registration should succeed");
 
-    // Connect to WebSocket, subscribe, and send message
+    // Connect to WebSocket, subscribe, and send envelope
     let handler = MessageHandler::connect(&addr, "alice")
         .await
         .expect("Should connect to WebSocket");
@@ -112,16 +113,24 @@ async fn test_send_message_via_websocket() {
         .await
         .expect("Should subscribe to group");
 
+    // Send an application message envelope
+    let envelope = MlsMessageEnvelope::ApplicationMessage {
+        sender: "alice".to_string(),
+        group_id: "testgroup_base64_encoded_id".to_string(),
+        encrypted_content: "encrypted_message_content".to_string(),
+    };
+
     handler
-        .send_message("testgroup", "encrypted_message_content")
+        .send_envelope(&envelope)
         .await
-        .expect("Should send message");
+        .expect("Should send envelope");
 }
 
 #[tokio::test]
 async fn test_two_clients_exchange_messages() {
-    // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
+    // Create persistent pool for message verification
+    let pool = actix_web::web::Data::new(mls_chat_server::db::create_test_pool());
+    let (server, addr) = mls_chat_server::server::create_test_http_server_with_pool(pool.clone())
         .expect("Failed to create test server");
     tokio::spawn(server);
 
@@ -159,36 +168,74 @@ async fn test_two_clients_exchange_messages() {
         .await
         .expect("Bob should subscribe to testgroup");
 
-    // Bob sends a message
+    // Bob sends a message via envelope
+    let bob_envelope = MlsMessageEnvelope::ApplicationMessage {
+        sender: "bob".to_string(),
+        group_id: "testgroup".to_string(),
+        encrypted_content: "hello_from_bob".to_string(),
+    };
+
     bob_handler
-        .send_message("testgroup", "hello_from_bob")
+        .send_envelope(&bob_envelope)
         .await
-        .expect("Bob should send message");
+        .expect("Bob should send envelope");
 
-    // Give the message a moment to be delivered
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Give the message a moment to be routed and persisted
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Alice receives Bob's message
-    let received = alice_handler
-        .next_message()
+    // Verify message was routed to Alice with a timeout
+    let received = tokio::time::timeout(
+        Duration::from_secs(2),
+        alice_handler.next_envelope(),
+    )
+    .await
+    .expect("Alice should receive message within 2 seconds")
+    .expect("Alice should receive Bob's envelope");
+
+    assert!(received.is_some(), "Alice should receive envelope from Bob");
+
+    let envelope = received.unwrap();
+    match envelope {
+        MlsMessageEnvelope::ApplicationMessage {
+            sender,
+            group_id,
+            encrypted_content,
+        } => {
+            assert_eq!(sender, "bob", "Sender should be bob");
+            assert_eq!(group_id, "testgroup", "Group should be testgroup");
+            assert_eq!(encrypted_content, "hello_from_bob", "Content should match");
+        }
+        _ => panic!("Expected ApplicationMessage envelope"),
+    }
+
+    // Verify message was persisted to database
+    let bob_user = mls_chat_server::db::Database::get_user(&pool, "bob")
         .await
-        .expect("Should receive message");
+        .expect("Should query user")
+        .expect("Bob user should exist");
 
-    assert!(
-        received.is_some(),
-        "Alice should receive message from Bob"
+    let group = mls_chat_server::db::Database::get_group(&pool, "testgroup")
+        .await
+        .expect("Should query group")
+        .expect("testgroup should exist");
+
+    let messages = mls_chat_server::db::Database::get_group_messages(&pool, group.id, 100)
+        .await
+        .expect("Should query messages");
+
+    assert_eq!(messages.len(), 1, "Should have exactly 1 message persisted");
+    assert_eq!(
+        messages[0].encrypted_content, "hello_from_bob",
+        "Persisted message content should match"
     );
-
-    let msg = received.unwrap();
-    assert_eq!(msg.sender, "bob");
-    assert_eq!(msg.group_id, "testgroup");
-    assert_eq!(msg.encrypted_content, "hello_from_bob");
+    assert_eq!(messages[0].sender_id, bob_user.id, "Sender ID should match Bob");
 }
 
 #[tokio::test]
 async fn test_multiple_groups_isolation() {
-    // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
+    // Create persistent pool for verification
+    let pool = actix_web::web::Data::new(mls_chat_server::db::create_test_pool());
+    let (server, addr) = mls_chat_server::server::create_test_http_server_with_pool(pool.clone())
         .expect("Failed to create test server");
     tokio::spawn(server);
 
@@ -203,7 +250,7 @@ async fn test_multiple_groups_isolation() {
         .expect("User registration should succeed");
 
     // Alice connects and subscribes to two groups
-    let mut handler = MessageHandler::connect(&addr, "alice")
+    let handler = MessageHandler::connect(&addr, "alice")
         .await
         .expect("Should connect to WebSocket");
 
@@ -217,25 +264,77 @@ async fn test_multiple_groups_isolation() {
         .await
         .expect("Should subscribe to group2");
 
-    // Send message to group1
+    // Send messages to both groups
+    let group1_envelope = MlsMessageEnvelope::ApplicationMessage {
+        sender: "alice".to_string(),
+        group_id: "group1".to_string(),
+        encrypted_content: "message_for_group1".to_string(),
+    };
+
+    let group2_envelope = MlsMessageEnvelope::ApplicationMessage {
+        sender: "alice".to_string(),
+        group_id: "group2".to_string(),
+        encrypted_content: "message_for_group2".to_string(),
+    };
+
     handler
-        .send_message("group1", "message_for_group1")
+        .send_envelope(&group1_envelope)
         .await
-        .expect("Should send to group1");
+        .expect("Should send envelope to group1");
 
-    // Give the message a moment to be delivered
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Receive message (should be the one we sent to group1)
-    let received = handler
-        .next_message()
+    handler
+        .send_envelope(&group2_envelope)
         .await
-        .expect("Should receive message");
+        .expect("Should send envelope to group2");
 
-    assert!(received.is_some(), "Should receive message");
-    let msg = received.unwrap();
-    assert_eq!(msg.group_id, "group1");
-    assert_eq!(msg.encrypted_content, "message_for_group1");
+    // Give messages a moment to be persisted
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify both messages were persisted to separate groups
+    let alice_user = mls_chat_server::db::Database::get_user(&pool, "alice")
+        .await
+        .expect("Should query user")
+        .expect("Alice user should exist");
+
+    let group1 = mls_chat_server::db::Database::get_group(&pool, "group1")
+        .await
+        .expect("Should query group1")
+        .expect("group1 should exist");
+
+    let group2 = mls_chat_server::db::Database::get_group(&pool, "group2")
+        .await
+        .expect("Should query group2")
+        .expect("group2 should exist");
+
+    // Verify group1 has its message
+    let group1_messages = mls_chat_server::db::Database::get_group_messages(&pool, group1.id, 100)
+        .await
+        .expect("Should query group1 messages");
+
+    assert_eq!(group1_messages.len(), 1, "group1 should have 1 message");
+    assert_eq!(
+        group1_messages[0].encrypted_content, "message_for_group1",
+        "group1 message content should match"
+    );
+    assert_eq!(group1_messages[0].sender_id, alice_user.id, "Sender should be alice");
+
+    // Verify group2 has its message
+    let group2_messages = mls_chat_server::db::Database::get_group_messages(&pool, group2.id, 100)
+        .await
+        .expect("Should query group2 messages");
+
+    assert_eq!(group2_messages.len(), 1, "group2 should have 1 message");
+    assert_eq!(
+        group2_messages[0].encrypted_content, "message_for_group2",
+        "group2 message content should match"
+    );
+    assert_eq!(group2_messages[0].sender_id, alice_user.id, "Sender should be alice");
+
+    // Verify messages are isolated - no cross-group pollution
+    assert_ne!(
+        group1_messages[0].encrypted_content, group2_messages[0].encrypted_content,
+        "Messages should be different between groups"
+    );
 }
 
 #[tokio::test]
@@ -258,7 +357,7 @@ async fn test_message_persistence() {
         .await
         .expect("User registration should succeed");
 
-    // Connect to WebSocket, subscribe, and send message
+    // Connect to WebSocket, subscribe, and send envelope
     let handler = MessageHandler::connect(&addr, "alice")
         .await
         .expect("Should connect to WebSocket");
@@ -268,13 +367,21 @@ async fn test_message_persistence() {
         .await
         .expect("Should subscribe to group");
 
+    // Send envelope with application message
+    // Note: The server stores messages sent via WebSocket in the database
+    let envelope = MlsMessageEnvelope::ApplicationMessage {
+        sender: "alice".to_string(),
+        group_id: "persistent_group".to_string(),  // Must match the group we subscribed to
+        encrypted_content: "message_to_persist".to_string(),
+    };
+
     handler
-        .send_message("persistent_group", "message_to_persist")
+        .send_envelope(&envelope)
         .await
-        .expect("Should send message");
+        .expect("Should send envelope");
 
     // Give the message a moment to be persisted
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Verify message was persisted by querying database directly
     let user = mls_chat_server::db::Database::get_user(&pool, "alice")

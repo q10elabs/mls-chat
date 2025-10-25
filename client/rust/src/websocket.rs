@@ -3,30 +3,13 @@
 use crate::error::Result;
 use crate::models::MlsMessageEnvelope;
 use futures::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[derive(Serialize)]
 struct SubscribeMessage {
     action: String,
     group_id: String,
-}
-
-#[derive(Serialize)]
-struct SendMessage {
-    action: String,
-    group_id: String,
-    encrypted_content: String,
-}
-
-/// Incoming message envelope from WebSocket (discriminated by type)
-pub type IncomingMessageEnvelope = MlsMessageEnvelope;
-
-#[derive(Deserialize)]
-pub struct IncomingMessage {
-    pub sender: String,
-    pub group_id: String,
-    pub encrypted_content: String,
 }
 
 /// WebSocket message handler
@@ -46,13 +29,13 @@ impl MessageHandler {
         } else {
             format!("ws://{}/ws/{}", server_url, username)
         };
-        
+
         let (ws_stream, _) = connect_async(&url).await?;
         let (mut write, read) = ws_stream.split();
-        
+
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<Message>();
         let (tx_out, rx_out) = futures::channel::mpsc::unbounded::<Message>();
-        
+
         // Spawn task to handle outgoing messages
         tokio::spawn(async move {
             while let Some(msg) = rx.next().await {
@@ -62,7 +45,7 @@ impl MessageHandler {
                 }
             }
         });
-        
+
         // Spawn task to handle incoming messages
         tokio::spawn(async move {
             let mut read = read;
@@ -75,7 +58,7 @@ impl MessageHandler {
                 }
             }
         });
-        
+
         Ok(Self {
             sender: tx,
             receiver: rx_out,
@@ -87,21 +70,6 @@ impl MessageHandler {
         let message = SubscribeMessage {
             action: "subscribe".to_string(),
             group_id: group_id.to_string(),
-        };
-        
-        let json = serde_json::to_string(&message)?;
-        let ws_message = Message::Text(json.into());
-        
-        self.sender.unbounded_send(ws_message)?;
-        Ok(())
-    }
-
-    /// Send a message to a group
-    pub async fn send_message(&self, group_id: &str, encrypted_content: &str) -> Result<()> {
-        let message = SendMessage {
-            action: "message".to_string(),
-            group_id: group_id.to_string(),
-            encrypted_content: encrypted_content.to_string(),
         };
 
         let json = serde_json::to_string(&message)?;
@@ -119,28 +87,15 @@ impl MessageHandler {
         Ok(())
     }
 
-    /// Get the next incoming message
-    pub async fn next_message(&mut self) -> Result<Option<IncomingMessage>> {
-        if let Some(msg) = self.receiver.next().await {
-            match msg {
-                Message::Text(text) => {
-                    let incoming: IncomingMessage = serde_json::from_str(&text)?;
-                    Ok(Some(incoming))
-                }
-                Message::Close(_) => Ok(None),
-                _ => Ok(None),
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Get the next incoming message envelope (supports discriminated MLS messages)
-    pub async fn next_envelope(&mut self) -> Result<Option<IncomingMessageEnvelope>> {
+    ///
+    /// Returns type-safe MLS message envelopes that can be pattern-matched to determine
+    /// message type (ApplicationMessage, WelcomeMessage, or CommitMessage).
+    pub async fn next_envelope(&mut self) -> Result<Option<MlsMessageEnvelope>> {
         if let Some(msg) = self.receiver.next().await {
             match msg {
                 Message::Text(text) => {
-                    let incoming: IncomingMessageEnvelope = serde_json::from_str(&text)?;
+                    let incoming: MlsMessageEnvelope = serde_json::from_str(&text)?;
                     Ok(Some(incoming))
                 }
                 Message::Close(_) => Ok(None),

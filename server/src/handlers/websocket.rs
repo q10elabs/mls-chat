@@ -180,6 +180,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
             Ok(ws::Message::Text(text)) => {
                 match serde_json::from_str::<serde_json::Value>(&text) {
                     Ok(value) => {
+                        // Check if this is an action-based control message (subscription/unsubscription)
                         if let Some(action) = value.get("action").and_then(|a| a.as_str()) {
                             match action {
                                 "subscribe" => {
@@ -190,35 +191,6 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
                                         actix::spawn(async move {
                                             server.subscribe(client_id, group_id).await;
                                         });
-                                    }
-                                }
-                                "message" => {
-                                    if let Some(group_id) = value.get("group_id").and_then(|g| g.as_str())
-                                    {
-                                        if let Some(content) =
-                                            value.get("encrypted_content").and_then(|c| c.as_str())
-                                        {
-                                            let server = self.server.clone();
-                                            let username = self.username.clone();
-                                            let group_id = group_id.to_string();
-                                            let content = content.to_string();
-                                            actix::spawn(async move {
-                                                let persisted = server
-                                                    .persist_message(&group_id, &username, &content)
-                                                    .await;
-
-                                                if persisted {
-                                                    let msg = json!({
-                                                        "type": "message",
-                                                        "sender": username,
-                                                        "group_id": group_id.clone(),
-                                                        "encrypted_content": content
-                                                    })
-                                                    .to_string();
-                                                    server.broadcast_to_group(&group_id, &msg).await;
-                                                }
-                                            });
-                                        }
                                     }
                                 }
                                 "unsubscribe" => {
@@ -234,6 +206,83 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
                                 }
                                 _ => {
                                     log::warn!("Unknown action: {}", action);
+                                }
+                            }
+                        } else if let Some(msg_type) = value.get("type").and_then(|t| t.as_str()) {
+                            // Handle MLS envelope-based messages (discriminated by type field)
+                            match msg_type {
+                                "application" => {
+                                    if let Some(group_id) = value.get("group_id").and_then(|g| g.as_str())
+                                    {
+                                        if let Some(encrypted_content) = value.get("encrypted_content").and_then(|c| c.as_str()) {
+                                            let server = self.server.clone();
+                                            let username = self.username.clone();
+                                            let group_id = group_id.to_string();
+                                            let encrypted_content = encrypted_content.to_string();
+                                            actix::spawn(async move {
+                                                let persisted = server
+                                                    .persist_message(&group_id, &username, &encrypted_content)
+                                                    .await;
+
+                                                if persisted {
+                                                    let msg = json!({
+                                                        "type": "application",
+                                                        "sender": username,
+                                                        "group_id": group_id.clone(),
+                                                        "encrypted_content": encrypted_content
+                                                    })
+                                                    .to_string();
+                                                    server.broadcast_to_group(&group_id, &msg).await;
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                                "welcome" => {
+                                    if let Some(welcome_blob) = value.get("welcome_blob").and_then(|w| w.as_str()) {
+                                        if let Some(inviter) = value.get("inviter").and_then(|i| i.as_str()) {
+                                            let server = self.server.clone();
+                                            let inviter = inviter.to_string();
+                                            let welcome_blob = welcome_blob.to_string();
+                                            actix::spawn(async move {
+                                                let msg = json!({
+                                                    "type": "welcome",
+                                                    "inviter": inviter,
+                                                    "welcome_blob": welcome_blob,
+                                                    "ratchet_tree_blob": ""  // Included for completeness
+                                                })
+                                                .to_string();
+                                                // Welcome messages don't persist, just broadcast to inviter
+                                                server.broadcast_to_group("welcome", &msg).await;
+                                            });
+                                        }
+                                    }
+                                }
+                                "commit" => {
+                                    if let Some(group_id) = value.get("group_id").and_then(|g| g.as_str())
+                                    {
+                                        if let Some(commit_blob) = value.get("commit_blob").and_then(|c| c.as_str()) {
+                                            if let Some(sender) = value.get("sender").and_then(|s| s.as_str()) {
+                                                let server = self.server.clone();
+                                                let group_id = group_id.to_string();
+                                                let commit_blob = commit_blob.to_string();
+                                                let sender = sender.to_string();
+                                                actix::spawn(async move {
+                                                    let msg = json!({
+                                                        "type": "commit",
+                                                        "group_id": group_id.clone(),
+                                                        "sender": sender,
+                                                        "commit_blob": commit_blob
+                                                    })
+                                                    .to_string();
+                                                    server.broadcast_to_group(&group_id, &msg).await;
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    log::warn!("Unknown message type: {}", msg_type);
                                 }
                             }
                         }

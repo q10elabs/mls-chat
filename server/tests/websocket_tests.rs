@@ -275,3 +275,143 @@ async fn test_websocket_client_cleanup_on_disconnect() {
     assert!(!group1_members.contains("client1"));
     assert!(group1_members.contains("client2"));
 }
+
+#[tokio::test]
+async fn test_websocket_envelope_application_message() {
+    let pool = Arc::new(web::Data::new(mls_chat_server::db::create_test_pool()));
+    let server = WsServer::new(pool.clone());
+
+    let alice_key = vec![0x01, 0x02, 0x03, 0x04];
+
+    // Register user
+    Database::register_user(pool.as_ref(), "alice", &alice_key)
+        .await
+        .expect("Failed to register");
+
+    // Persist an application message using envelope format
+    let persisted = server
+        .persist_message("team", "alice", "encrypted_app_msg")
+        .await;
+
+    assert!(persisted, "Should persist application message");
+
+    // Verify message was stored
+    let group = Database::get_group(pool.as_ref(), "team")
+        .await
+        .expect("Failed to get group")
+        .expect("Group should exist");
+
+    let messages = Database::get_group_messages(pool.as_ref(), group.id, 10)
+        .await
+        .expect("Failed to get messages");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].encrypted_content, "encrypted_app_msg");
+}
+
+#[tokio::test]
+async fn test_websocket_envelope_message_routing_to_multiple_subscribers() {
+    let pool = Arc::new(web::Data::new(mls_chat_server::db::create_test_pool()));
+    let server = WsServer::new(pool);
+
+    let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
+    let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
+
+    // Register clients and subscribe to group
+    server.register("alice_client".to_string(), tx1).await;
+    server.register("bob_client".to_string(), tx2).await;
+
+    server
+        .subscribe("alice_client".to_string(), "secure_group".to_string())
+        .await;
+    server
+        .subscribe("bob_client".to_string(), "secure_group".to_string())
+        .await;
+
+    // Broadcast an application message to group
+    let app_msg = serde_json::json!({
+        "type": "application",
+        "sender": "alice",
+        "group_id": "secure_group",
+        "encrypted_content": "encrypted_payload"
+    })
+    .to_string();
+
+    server.broadcast_to_group("secure_group", &app_msg).await;
+
+    // Both subscribers should receive the message
+    assert_eq!(rx1.recv().await, Some(app_msg.clone()));
+    assert_eq!(rx2.recv().await, Some(app_msg.clone()));
+}
+
+#[tokio::test]
+async fn test_websocket_envelope_message_isolation_between_groups() {
+    let pool = Arc::new(web::Data::new(mls_chat_server::db::create_test_pool()));
+    let server = WsServer::new(pool.clone());
+
+    let alice_key = vec![0x05, 0x06, 0x07, 0x08];
+    Database::register_user(pool.as_ref(), "alice", &alice_key)
+        .await
+        .expect("Failed to register");
+
+    // Send application messages to different groups
+    let msg_group1 = server
+        .persist_message("group1", "alice", "msg_for_group1")
+        .await;
+    let msg_group2 = server
+        .persist_message("group2", "alice", "msg_for_group2")
+        .await;
+
+    assert!(msg_group1, "Should persist message to group1");
+    assert!(msg_group2, "Should persist message to group2");
+
+    // Verify messages were stored in separate groups
+    let group1 = Database::get_group(pool.as_ref(), "group1")
+        .await
+        .expect("Failed to get group1")
+        .expect("group1 should exist");
+
+    let group2 = Database::get_group(pool.as_ref(), "group2")
+        .await
+        .expect("Failed to get group2")
+        .expect("group2 should exist");
+
+    let msgs_group1 = Database::get_group_messages(pool.as_ref(), group1.id, 10)
+        .await
+        .expect("Failed to get messages");
+    let msgs_group2 = Database::get_group_messages(pool.as_ref(), group2.id, 10)
+        .await
+        .expect("Failed to get messages");
+
+    assert_eq!(msgs_group1.len(), 1);
+    assert_eq!(msgs_group2.len(), 1);
+    assert_eq!(msgs_group1[0].encrypted_content, "msg_for_group1");
+    assert_eq!(msgs_group2[0].encrypted_content, "msg_for_group2");
+}
+
+#[tokio::test]
+async fn test_websocket_subscription_only_protocol() {
+    // Verify that subscription/unsubscription still works (action-based protocol)
+    let pool = Arc::new(web::Data::new(mls_chat_server::db::create_test_pool()));
+    let server = WsServer::new(pool);
+
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+    server.register("client1".to_string(), tx).await;
+
+    // Subscribe via action-based protocol
+    server
+        .subscribe("client1".to_string(), "chat_group".to_string())
+        .await;
+
+    let groups = server.groups.read().await;
+    assert!(groups.get("chat_group").unwrap().contains("client1"));
+    drop(groups);
+
+    // Unsubscribe
+    server.unsubscribe("client1", "chat_group").await;
+
+    let groups = server.groups.read().await;
+    let group_members = groups.get("chat_group").map(|g| g.clone());
+    assert!(group_members.is_none() || !group_members.unwrap().contains("client1"));
+}
