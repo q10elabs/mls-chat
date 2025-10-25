@@ -138,18 +138,17 @@ async fn test_list_members() {
 /// Test 7: Client can be created with various server URLs
 #[tokio::test]
 async fn test_create_client_with_various_urls() {
-    let _temp_dir = tempdir().expect("Failed to create temp dir");
-
-    let _client1 = MlsClient::new("http://localhost:4000", "alice", "group")
-        .await
+    // Use separate temp directories for each client to ensure isolation
+    let _temp_dir1 = tempdir().expect("Failed to create temp dir 1");
+    let _client1 = MlsClient::new_with_storage_path("http://localhost:4000", "alice", "group", _temp_dir1.path())
         .expect("Failed with http://");
 
-    let _client2 = MlsClient::new("http://example.com:8080", "bob", "group")
-        .await
+    let _temp_dir2 = tempdir().expect("Failed to create temp dir 2");
+    let _client2 = MlsClient::new_with_storage_path("http://example.com:8080", "bob", "group", _temp_dir2.path())
         .expect("Failed with http://example.com:8080");
 
-    let _client3 = MlsClient::new("http://192.168.1.1:5000", "carol", "group")
-        .await
+    let _temp_dir3 = tempdir().expect("Failed to create temp dir 3");
+    let _client3 = MlsClient::new_with_storage_path("http://192.168.1.1:5000", "carol", "group", _temp_dir3.path())
         .expect("Failed with IP address");
 }
 

@@ -14,7 +14,6 @@ use crate::provider::MlsProvider;
 use crate::storage::LocalStore;
 use crate::websocket::MessageHandler;
 use base64::{engine::general_purpose, Engine as _};
-use directories::BaseDirs;
 use openmls::prelude::{GroupId, OpenMlsProvider};
 use tls_codec::{Deserialize, Serialize as TlsSerialize};
 
@@ -39,26 +38,7 @@ pub struct MlsClient {
 }
 
 impl MlsClient {
-    /// Create a new MLS client
-    ///
-    /// # Arguments
-    /// * `server_url` - URL of the MLS server
-    /// * `username` - Username for this client instance
-    /// * `group_name` - Name of the group to create/join
-    ///
-    /// # Errors
-    /// * File system errors when creating storage directories
-    /// * Database initialization errors
-    pub async fn new(server_url: &str, username: &str, group_name: &str) -> Result<Self> {
-        // Get storage paths
-        let base_dirs = BaseDirs::new()
-            .ok_or_else(|| ClientError::Config("Failed to get home directory".to_string()))?;
-        let mlschat_dir = base_dirs.home_dir().join(".mlschat");
-
-        Self::new_with_storage_path(server_url, username, group_name, &mlschat_dir)
-    }
-
-    /// Create a new MLS client with custom storage path (for testing)
+    /// Create a new MLS client with custom storage path
     ///
     /// # Arguments
     /// * `server_url` - URL of the MLS server
