@@ -1005,6 +1005,13 @@ impl MlsClient {
                 group_id,
                 encrypted_content,
             } => {
+                // Skip processing our own application messages - the ratchet state is out of sync
+                // (sender ratchet advances on send, but receiver ratchet is what's needed for decryption)
+                if sender == self.username {
+                    log::debug!("Skipping our own application message (ratchet state already advanced on send)");
+                    return Ok(());
+                }
+
                 // Use the dedicated message processing module
                 if let Some(group) = &mut self.mls_group {
                     match process_application_message(

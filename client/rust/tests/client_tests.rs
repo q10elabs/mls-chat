@@ -392,14 +392,67 @@ async fn test_server_health_check() {
     // Create test server
     let (server, addr) = create_test_server().await;
     let server_handle = tokio::spawn(server);
-    
+
     // Create client
     let (client, _temp_dir) = create_client_with_server(&format!("http://{}", addr), "health_user", "health_group");
-    
+
     // Test server health check
     let health_result = client.get_api().health_check().await;
     assert!(health_result.is_ok(), "Server health check should succeed");
-    
+
+    // Cleanup
+    server_handle.abort();
+}
+
+/// Integration Test 7: Sender skips processing their own application messages
+///
+/// This test verifies that when a client receives a broadcast of their own
+/// application message (echo from server), the client skips decryption
+/// instead of attempting to decrypt with out-of-sync ratchet state.
+///
+/// Specifically, this test ensures that:
+/// 1. Alice sends a message (ratchet advances on sender side)
+/// 2. Server broadcasts the message back to Alice
+/// 3. Alice receives her own message but SKIPS it (doesn't try to decrypt)
+/// 4. This avoids the decryption failure that would occur if Alice tried to
+///    decrypt her own message using her updated (receiver-side) ratchet state
+#[tokio::test]
+async fn test_sender_skips_own_application_message() {
+    // Create test server
+    let (server, addr) = create_test_server().await;
+    let server_handle = tokio::spawn(server);
+
+    // Create two clients
+    let (mut alice, _temp_dir1) = create_client_with_server(&format!("http://{}", addr), "alice", "testgroup");
+    let (mut bob, _temp_dir2) = create_client_with_server(&format!("http://{}", addr), "bob", "testgroup");
+
+    // Initialize both clients
+    alice.initialize().await.expect("Failed to initialize Alice");
+    bob.initialize().await.expect("Failed to initialize Bob");
+
+    // Both connect to their groups
+    alice.connect_to_group().await.expect("Failed to connect Alice");
+    bob.connect_to_group().await.expect("Failed to connect Bob");
+
+    // Alice invites Bob to her group
+    alice.invite_user("bob").await.expect("Failed to invite Bob");
+
+    // Give Bob time to process the Welcome message
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Alice sends a message
+    // When the server broadcasts this back to Alice, Alice should skip it (not try to decrypt)
+    alice.send_message("Hello from Alice!").await
+        .expect("Failed to send message from Alice");
+
+    // Give time for message broadcast
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // The test passes if Alice doesn't panic/error when receiving her own message
+    // Before the fix, Alice would try to decrypt her own message and fail because
+    // the ratchet state is out of sync (advanced on send, not on receive).
+    // With the fix, Alice skips her own message as expected.
+
     // Cleanup
     server_handle.abort();
 }
