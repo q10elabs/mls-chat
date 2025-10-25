@@ -56,7 +56,6 @@ async fn test_two_party_invitation_alice_invites_bob() {
 #[test]
 fn test_welcome_message_envelope_structure() {
     let welcome_envelope = MlsMessageEnvelope::WelcomeMessage {
-        group_id: "testgroup".to_string(),
         inviter: "alice".to_string(),
         welcome_blob: "base64welcomeblob".to_string(),
         ratchet_tree_blob: "base64ratchettree".to_string(),
@@ -68,8 +67,8 @@ fn test_welcome_message_envelope_structure() {
     // Verify type field
     assert!(json.contains("\"type\":\"welcome\""), "Should have welcome type");
 
-    // Verify required fields
-    assert!(json.contains("\"group_id\":\"testgroup\""), "Should have group_id");
+    // Verify required fields (NO group_id in WelcomeMessage)
+    assert!(!json.contains("group_id"), "Should NOT have group_id field");
     assert!(json.contains("\"inviter\":\"alice\""), "Should have inviter");
     assert!(json.contains("\"welcome_blob\":"), "Should have welcome_blob");
     assert!(json.contains("\"ratchet_tree_blob\":"), "Should have ratchet_tree_blob");
@@ -265,7 +264,6 @@ async fn test_invitation_to_nonexistent_user_fails() {
 #[test]
 fn test_welcome_message_completeness() {
     let welcome = MlsMessageEnvelope::WelcomeMessage {
-        group_id: "mygroup".to_string(),
         inviter: "alice".to_string(),
         welcome_blob: "SerializedWelcomeFromAlice".to_string(),
         ratchet_tree_blob: "RatchetTreeForBob".to_string(),
@@ -273,13 +271,11 @@ fn test_welcome_message_completeness() {
 
     match welcome {
         MlsMessageEnvelope::WelcomeMessage {
-            group_id,
             inviter,
             welcome_blob,
             ratchet_tree_blob,
         } => {
             // All fields should be present and non-empty for real messages
-            assert!(!group_id.is_empty(), "group_id required");
             assert!(!inviter.is_empty(), "inviter required");
             assert!(!welcome_blob.is_empty(), "welcome_blob required");
             assert!(!ratchet_tree_blob.is_empty(), "ratchet_tree_blob required");

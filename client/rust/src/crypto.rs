@@ -53,12 +53,27 @@ pub fn generate_key_package_bundle(
 
 /// Create a new MLS group with configuration
 pub fn create_group_with_config(
-    credential: &CredentialWithKey, 
+    credential: &CredentialWithKey,
     signer: &SignatureKeyPair,
     provider: &impl OpenMlsProvider,
+    group_name: &str,
 ) -> Result<MlsGroup> {
-    let group_config = MlsGroupCreateConfig::default();
-    
+    // Create group metadata extension (encrypted in group state)
+    let metadata = crate::extensions::GroupMetadata::new(group_name.to_string());
+    let metadata_bytes = metadata.to_bytes()
+        .map_err(|e| MlsError::OpenMls(format!("Failed to serialize group metadata: {}", e)))?;
+
+    let group_metadata_ext = Extensions::single(Extension::Unknown(
+        crate::extensions::GROUP_METADATA_EXTENSION_TYPE,
+        UnknownExtension(metadata_bytes),
+    ));
+
+    // Create group with metadata extension in GroupContext
+    let group_config = MlsGroupCreateConfig::builder()
+        .with_group_context_extensions(group_metadata_ext)
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?
+        .build();
+
     let group = MlsGroup::new(
         provider,
         signer,
@@ -66,7 +81,7 @@ pub fn create_group_with_config(
         credential.clone(),
     )
     .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-    
+
     Ok(group)
 }
 
@@ -195,6 +210,18 @@ pub fn load_group_from_storage(
         .map_err(|e| MlsError::OpenMls(format!("Failed to load group: {}", e)).into())
 }
 
+/// Extract group metadata from group context extensions
+pub fn extract_group_metadata(group: &MlsGroup) -> Result<Option<crate::extensions::GroupMetadata>> {
+    let extensions = group.extensions();
+
+    if let Some(ext) = extensions.unknown(crate::extensions::GROUP_METADATA_EXTENSION_TYPE) {
+        let metadata = crate::extensions::GroupMetadata::from_bytes(&ext.0)
+            .map_err(|e| MlsError::OpenMls(format!("Failed to parse group metadata: {}", e)))?;
+        Ok(Some(metadata))
+    } else {
+        Ok(None)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -219,8 +246,13 @@ mod tests {
     fn test_create_group_with_config() {
         let provider = &OpenMlsRustCrypto::default();
         let (credential, keypair) = generate_credential_with_key("alice").unwrap();
-        let group = create_group_with_config(&credential, &keypair, provider).unwrap();
+        let group = create_group_with_config(&credential, &keypair, provider, "testgroup").unwrap();
         assert!(!group.group_id().as_slice().is_empty());
+
+        // Verify metadata was stored
+        let metadata = extract_group_metadata(&group).unwrap();
+        assert!(metadata.is_some());
+        assert_eq!(metadata.unwrap().name, "testgroup");
     }
 
     #[test]
@@ -229,7 +261,7 @@ mod tests {
 
         // Alice creates a group
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider).unwrap();
+        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
 
         // Bob generates key package
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
@@ -282,7 +314,7 @@ mod tests {
 
         // Alice creates group
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider).unwrap();
+        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
 
         // Bob generates key package
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
@@ -317,7 +349,7 @@ mod tests {
 
         // Alice creates group
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider).unwrap();
+        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
 
         // Bob generates key package
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
@@ -366,7 +398,7 @@ mod tests {
 
         // Alice creates group
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider).unwrap();
+        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
 
         // Bob joins
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
@@ -447,7 +479,7 @@ mod tests {
         // === Session 1: Create group and store metadata ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "testgroup").unwrap();
         let group_id = alice_group_1.group_id().as_slice().to_vec();
 
         // Store the group ID in metadata (simulating client storing group mapping)
@@ -483,7 +515,7 @@ mod tests {
         // === Session 1: Create group and add Bob ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
         let group_id = alice_group_1.group_id().as_slice().to_vec();
 
         // Bob generates his key package
@@ -529,13 +561,13 @@ mod tests {
 
         // Create and store first group
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let group1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let group1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group1").unwrap();
         let group1_id = group1.group_id().as_slice().to_vec();
         provider1.save_group_name("alice:group1", &group1_id).unwrap();
 
         // Create and store second group
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
-        let group2 = create_group_with_config(&bob_cred, &bob_key, &provider1).unwrap();
+        let group2 = create_group_with_config(&bob_cred, &bob_key, &provider1, "group2").unwrap();
         let group2_id = group2.group_id().as_slice().to_vec();
         provider1.save_group_name("bob:group2", &group2_id).unwrap();
 
@@ -560,7 +592,7 @@ mod tests {
         // === Session 1: Create group and perform messaging operations ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
         let group_id_1 = alice_group_1.group_id().as_slice().to_vec();
 
         // Perform some group operations (send message)
@@ -605,7 +637,7 @@ mod tests {
         // === Session 1: Create group and persist state ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
         let group_id = alice_group_1.group_id().clone();
 
         // Send a message to modify state
@@ -648,7 +680,7 @@ mod tests {
         // === Session 1: Create group and add members ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
         let group_id = alice_group_1.group_id().clone();
 
         // Initial state - just Alice
@@ -708,7 +740,7 @@ mod tests {
         // === Session 1: Create group and add member (epoch advances) ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1).unwrap();
+        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
         let group_id = alice_group_1.group_id().clone();
         let epoch_initial = alice_group_1.epoch();
 

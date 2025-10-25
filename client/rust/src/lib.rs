@@ -6,6 +6,7 @@ pub mod cli;
 pub mod client;
 pub mod crypto;
 pub mod error;
+pub mod extensions;
 pub mod identity;
 pub mod message_processing;
 pub mod models;

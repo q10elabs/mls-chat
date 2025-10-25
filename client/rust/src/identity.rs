@@ -8,7 +8,6 @@ use crate::provider::MlsProvider;
 use crate::storage::LocalStore;
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
-use tls_codec::Serialize;
 
 /// Represents a stored user identity with all cryptographic material
 ///
@@ -163,6 +162,7 @@ mod tests {
     use super::*;
     use crate::storage::LocalStore;
     use tempfile::tempdir;
+    use tls_codec::Serialize;
 
     #[test]
     fn test_create_new_identity() {

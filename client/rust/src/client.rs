@@ -223,6 +223,7 @@ impl MlsClient {
                                     &credential_with_key,
                                     sig_key,
                                     &self.mls_provider,
+                                    &self.group_name,
                                 )?;
                                 let group_id = group.group_id().as_slice().to_vec();
                                 self.mls_provider.save_group_name(&group_id_key, &group_id)?;
@@ -248,6 +249,7 @@ impl MlsClient {
                             &credential_with_key,
                             sig_key,
                             &self.mls_provider,
+                            &self.group_name,
                         )?;
                         let group_id = group.group_id().as_slice().to_vec();
 
@@ -269,6 +271,7 @@ impl MlsClient {
                             &credential_with_key,
                             sig_key,
                             &self.mls_provider,
+                            &self.group_name,
                         )?;
                         let group_id = group.group_id().as_slice().to_vec();
 
@@ -329,8 +332,18 @@ impl MlsClient {
                     // Encode for WebSocket transmission
                     let encrypted_b64 = general_purpose::STANDARD.encode(&encrypted_bytes);
 
-                    // Send via WebSocket
-                    websocket.send_message(&self.group_name, &encrypted_b64).await?;
+                    // Send via WebSocket with MLS group ID (base64-encoded) for server routing
+                    let mls_group_id_b64 = general_purpose::STANDARD.encode(
+                        self.group_id.as_ref().expect("Group ID must be set before sending messages")
+                    );
+
+                    let app_envelope = MlsMessageEnvelope::ApplicationMessage {
+                        sender: self.username.clone(),
+                        group_id: mls_group_id_b64,
+                        encrypted_content: encrypted_b64,
+                    };
+
+                    websocket.send_envelope(&app_envelope).await?;
                     println!("{}", format_message(&self.group_name, &self.username, text));
                 } else {
                     log::error!("Cannot send message: group not connected");
@@ -423,13 +436,12 @@ impl MlsClient {
                         }
                     }
                     MlsMessageEnvelope::WelcomeMessage {
-                        group_id,
                         inviter,
                         welcome_blob,
                         ratchet_tree_blob,
                     } => {
-                        // Process Welcome message
-                        match self.handle_welcome_message(&group_id, &inviter, &welcome_blob, &ratchet_tree_blob).await {
+                        // Process Welcome message (group_name is extracted from encrypted metadata)
+                        match self.handle_welcome_message(&inviter, &welcome_blob, &ratchet_tree_blob).await {
                             Ok(()) => {
                                 log::info!("Successfully processed Welcome message from {}", inviter);
                             }
@@ -549,17 +561,13 @@ impl MlsClient {
                         )))?;
                     let ratchet_tree_b64 = general_purpose::STANDARD.encode(&ratchet_tree_bytes);
 
-                    // Create and send Welcome envelope directly to invitee
+                    // Create and send Welcome envelope (no group_id - direct to invitee)
                     let welcome_envelope = MlsMessageEnvelope::WelcomeMessage {
-                        group_id: self.group_name.clone(),
                         inviter: self.username.clone(),
                         welcome_blob: welcome_b64,
                         ratchet_tree_blob: ratchet_tree_b64,
                     };
 
-                    // Note: In a real implementation, this should be sent directly to invitee's channel
-                    // For now, we'll send it with the invitee username in a special format
-                    // Server would route this to the invitee
                     websocket.send_envelope(&welcome_envelope).await?;
                     log::info!("Sent Welcome message to {} (ratchet tree included)", invitee_username);
                 } else {
@@ -568,6 +576,10 @@ impl MlsClient {
 
                 // Broadcast Commit to all existing members so they learn about the new member
                 if let Some(websocket) = &self.websocket {
+                    let mls_group_id_b64 = general_purpose::STANDARD.encode(
+                        self.group_id.as_ref().expect("Group ID must be set before inviting")
+                    );
+
                     let commit_bytes = commit_message
                         .tls_serialize_detached()
                         .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(
@@ -576,7 +588,7 @@ impl MlsClient {
                     let commit_b64 = general_purpose::STANDARD.encode(&commit_bytes);
 
                     let commit_envelope = MlsMessageEnvelope::CommitMessage {
-                        group_id: self.group_name.clone(),
+                        group_id: mls_group_id_b64,
                         sender: self.username.clone(),
                         commit_blob: commit_b64,
                     };
@@ -617,12 +629,11 @@ impl MlsClient {
     /// * Storage errors
     pub async fn handle_welcome_message(
         &mut self,
-        group_name: &str,
-        _inviter: &str,
+        inviter: &str,
         welcome_blob_b64: &str,
         ratchet_tree_blob_b64: &str,
     ) -> Result<()> {
-        log::info!("Received Welcome message for group {} from inviter", group_name);
+        log::info!("Received Welcome message from {}", inviter);
 
         // Decode Welcome message
         let welcome_bytes = general_purpose::STANDARD
@@ -651,20 +662,25 @@ impl MlsClient {
                 Some(ratchet_tree),
             )?;
 
-            // Store the group mapping
+            // Extract group name from encrypted metadata
+            let metadata = crypto::extract_group_metadata(&joined_group)?
+                .ok_or_else(|| ClientError::Config("Missing group metadata in Welcome".to_string()))?;
+
+            // Store the group ID mapping with the authoritative group name
             let group_id = joined_group.group_id().as_slice().to_vec();
-            let group_id_key = format!("{}:{}", self.username, group_name);
+            let group_id_key = format!("{}:{}", self.username, &metadata.name);
             self.mls_provider.save_group_name(&group_id_key, &group_id)?;
 
-            // Update in-memory state
+            // Update in-memory state from authoritative encrypted source
+            self.group_name = metadata.name.clone();
             self.group_id = Some(group_id);
             self.mls_group = Some(joined_group);
 
-            log::info!("Successfully joined group {} via Welcome message", group_name);
+            log::info!("Successfully joined group {} via Welcome message", self.group_name);
 
             println!(
                 "{}",
-                format_control(group_name, "you have been invited to this group")
+                format_control(&self.group_name, "you have been invited to this group")
             );
         } else {
             return Err(ClientError::Config("Credential not initialized".to_string()).into());
@@ -869,7 +885,7 @@ mod tests {
 
         // Create a test group ID (from a real group)
         let (cred, sig_key) = crate::crypto::generate_credential_with_key("alice").unwrap();
-        let group = crate::crypto::create_group_with_config(&cred, &sig_key, &mls_provider).unwrap();
+        let group = crate::crypto::create_group_with_config(&cred, &sig_key, &mls_provider, "testgroup").unwrap();
         let group_id = group.group_id().as_slice().to_vec();
 
         // Store metadata
@@ -896,7 +912,7 @@ mod tests {
         let (credential_with_key, _) = crate::crypto::generate_credential_with_key("alice").unwrap();
         let sig_key = crate::crypto::generate_credential_with_key("alice").unwrap().1;
 
-        let group1 = crate::crypto::create_group_with_config(&credential_with_key, &sig_key, &mls_provider)
+        let group1 = crate::crypto::create_group_with_config(&credential_with_key, &sig_key, &mls_provider, "testgroup")
             .unwrap();
         let initial_epoch = group1.epoch();
         let group_id = group1.group_id().clone();
@@ -960,7 +976,7 @@ mod tests {
         let (credential_with_key, _) = crate::crypto::generate_credential_with_key("alice").unwrap();
         let sig_key = crate::crypto::generate_credential_with_key("alice").unwrap().1;
 
-        let mut alice_group1 = crate::crypto::create_group_with_config(&credential_with_key, &sig_key, &mls_provider).unwrap();
+        let mut alice_group1 = crate::crypto::create_group_with_config(&credential_with_key, &sig_key, &mls_provider, "testgroup").unwrap();
         let alice_group1_id = alice_group1.group_id().clone();
 
         // Send a message to advance epoch

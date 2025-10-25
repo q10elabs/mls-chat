@@ -10,7 +10,7 @@ use crate::error::{Result, ClientError};
 use crate::models::IncomingMessage;
 use base64::{engine::general_purpose, Engine as _};
 use openmls::prelude::*;
-use tls_codec::{Deserialize, Serialize};
+use tls_codec::Deserialize;
 
 /// Process a single incoming message envelope
 ///
@@ -181,6 +181,7 @@ mod tests {
     use crate::crypto;
     use crate::provider::MlsProvider;
     use tempfile::tempdir;
+    use tls_codec::Serialize;
 
     #[test]
     fn test_extract_plaintext() {
@@ -210,7 +211,7 @@ mod tests {
 
         // Create Alice's group
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider).unwrap();
+        let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
         // Create Bob's credentials and key package
         let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
@@ -264,7 +265,7 @@ mod tests {
 
         // Create a group
         let (cred, sig_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider).unwrap();
+        let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider, "testgroup").unwrap();
 
         // Try to process invalid base64
         let result = process_application_message(
@@ -293,7 +294,7 @@ mod tests {
 
         // Create a group
         let (cred, sig_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider).unwrap();
+        let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider, "testgroup").unwrap();
 
         // Try to process invalid TLS data
         let invalid_data = "dGVzdA=="; // "test" in base64, but not valid TLS

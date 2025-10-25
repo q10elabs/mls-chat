@@ -22,7 +22,7 @@ async fn test_process_application_message_success() {
 
     // Create Alice's group
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider).unwrap();
+    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
     // Create Bob's credentials and key package
     let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
@@ -77,7 +77,7 @@ async fn test_process_application_message_invalid_base64() {
 
     // Create a group
     let (cred, sig_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider).unwrap();
+    let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider, "testgroup").unwrap();
 
     // Try to process invalid base64
     let result = process_application_message(
@@ -107,7 +107,7 @@ async fn test_process_application_message_invalid_tls() {
 
     // Create a group
     let (cred, sig_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider).unwrap();
+    let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider, "testgroup").unwrap();
 
     // Try to process invalid TLS data
     let invalid_data = "dGVzdA=="; // "test" in base64, but not valid TLS
@@ -152,7 +152,7 @@ async fn test_multi_party_message_processing() {
 
     // Alice creates group
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider).unwrap();
+    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
     // Bob generates key package
     let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
@@ -229,7 +229,7 @@ async fn test_message_processing_content_types() {
 
     // Create Alice's group
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider).unwrap();
+    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
     // Create Bob's credentials and key package
     let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
@@ -293,7 +293,7 @@ async fn test_corrupted_message_handling() {
 
     // Create a group
     let (cred, sig_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider).unwrap();
+    let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider, "testgroup").unwrap();
 
     // Test various corrupted message scenarios
     let corrupted_messages = vec![
@@ -326,7 +326,7 @@ async fn test_empty_message_processing() {
 
     // Create Alice's group
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider).unwrap();
+    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
     // Create Bob's credentials and key package
     let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
@@ -380,7 +380,7 @@ async fn test_message_processing_performance() {
 
     // Create Alice's group
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider).unwrap();
+    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
     // Create Bob's credentials and key package
     let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
