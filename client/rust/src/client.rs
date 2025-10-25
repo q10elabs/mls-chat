@@ -411,6 +411,7 @@ impl MlsClient {
                         commit_blob,
                     } => {
                         // Process Commit message
+                        // Per MLS protocol: members learn about new group members from Commits (docs/membership-learn.md)
                         // Note: group_id in envelope is base64-encoded MLS group ID
                         // We use self.group_name (human-readable) for display
                         log::info!("Received Commit from {} for group {}", sender, self.group_name);
@@ -421,12 +422,34 @@ impl MlsClient {
                                     Ok(commit_message_in) => {
                                         if let Some(group) = &mut self.mls_group {
                                             match crypto::process_message(group, &self.mls_provider, &commit_message_in) {
-                                                Ok(_processed_commit) => {
-                                                    // Use human-readable group_name for display (not base64 group_id)
-                                                    println!(
-                                                        "{}",
-                                                        format_display_message(&self.group_name, &sender, "[updated group]")
-                                                    );
+                                                Ok(processed_commit) => {
+                                                    // Extract and merge the staged commit to update group state
+                                                    match processed_commit.into_content() {
+                                                        openmls::prelude::ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+                                                            // Merge the staged commit to apply the group changes
+                                                            match group.merge_staged_commit(&self.mls_provider, *staged_commit) {
+                                                                Ok(()) => {
+                                                                    // Group state is now updated - member list reflects latest changes
+                                                                    let member_count = group.members().count();
+                                                                    log::info!(
+                                                                        "Merged Commit from {}, group now has {} members",
+                                                                        sender,
+                                                                        member_count
+                                                                    );
+                                                                    println!(
+                                                                        "{}",
+                                                                        format_display_message(&self.group_name, &sender, "[updated group membership]")
+                                                                    );
+                                                                }
+                                                                Err(e) => {
+                                                                    log::error!("Failed to merge Commit: {}", e);
+                                                                }
+                                                            }
+                                                        }
+                                                        _ => {
+                                                            log::debug!("Received non-commit handshake message: ignoring");
+                                                        }
+                                                    }
                                                 }
                                                 Err(e) => {
                                                     log::error!("Failed to process Commit: {}", e);
@@ -1091,6 +1114,187 @@ mod tests {
         // Test with a KeyPackage that has the same encryption and init keys (should fail)
         // This is harder to test without creating a malformed KeyPackage, so we'll just test the happy path
         // In a real implementation, you'd want to test edge cases like malformed credentials, etc.
+    }
+
+    /// Test that commits are properly merged when received from peers
+    ///
+    /// Verifies that when a client receives a Commit message:
+    /// 1. The commit is deserialized correctly
+    /// 2. The commit is processed via process_message
+    /// 3. The staged commit is extracted and merged
+    /// 4. The group state is updated (member count increases)
+    #[test]
+    fn test_commit_message_merge_three_party() {
+        use tempfile::tempdir;
+        use crate::crypto;
+        use crate::provider::MlsProvider;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let provider = MlsProvider::new(&db_path).unwrap();
+
+        // === Alice creates group ===
+        let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
+        let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+
+        // === Alice invites Bob ===
+        let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
+        let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
+        let (_commit_1, welcome_1, _) = crypto::add_members(
+            &mut alice_group,
+            &provider,
+            &alice_key,
+            &[bob_key_package.key_package()],
+        ).unwrap();
+        crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
+
+        // Bob joins
+        let join_config = openmls::prelude::MlsGroupJoinConfig::default();
+        let ratchet_tree_1 = Some(crypto::export_ratchet_tree(&alice_group));
+        let serialized_1 = welcome_1.tls_serialize_detached().unwrap();
+        let welcome_1_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_1.as_slice()).unwrap();
+        let mut bob_group = crypto::process_welcome_message(&provider, &join_config, &welcome_1_in, ratchet_tree_1).unwrap();
+
+        // Verify Bob initially sees [Alice, Bob]
+        let bob_members_before: Vec<String> = bob_group
+            .members()
+            .filter_map(|member| {
+                if let openmls::prelude::CredentialType::Basic = member.credential.credential_type() {
+                    if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
+                        return String::from_utf8(basic_cred.identity().to_vec()).ok();
+                    }
+                }
+                None
+            })
+            .collect();
+        assert_eq!(bob_members_before.len(), 2);
+
+        // === Alice invites Carol (this is the key part - Bob must process the commit) ===
+        let (carol_cred, carol_key) = crypto::generate_credential_with_key("carol").unwrap();
+        let carol_key_package = crypto::generate_key_package_bundle(&carol_cred, &carol_key, &provider).unwrap();
+        let (commit_2, welcome_2, _) = crypto::add_members(
+            &mut alice_group,
+            &provider,
+            &alice_key,
+            &[carol_key_package.key_package()],
+        ).unwrap();
+        crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
+
+        // === Bob receives and processes Commit#2 (simulating WebSocket delivery) ===
+        // This is what the client code does when receiving a CommitMessage envelope
+        let serialized_commit_2 = commit_2.tls_serialize_detached().unwrap();
+        let commit_2_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_commit_2.as_slice()).unwrap();
+        let protocol_msg_2 = commit_2_in.try_into_protocol_message().unwrap();
+
+        // Simulate crypto::process_message
+        let processed_commit = bob_group.process_message(&provider, protocol_msg_2).unwrap();
+
+        // ✅ THE CRITICAL FIX: Extract and merge the staged commit
+        let content = processed_commit.into_content();
+        match content {
+            openmls::prelude::ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+                // This is what was missing in the client code!
+                // Merge the staged commit to apply group changes
+                bob_group.merge_staged_commit(&provider, *staged_commit).unwrap();
+
+                // Now verify Bob sees [Alice, Bob, Carol] at epoch E+2
+                let bob_members_after: Vec<String> = bob_group
+                    .members()
+                    .filter_map(|member| {
+                        if let openmls::prelude::CredentialType::Basic = member.credential.credential_type() {
+                            if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
+                                return String::from_utf8(basic_cred.identity().to_vec()).ok();
+                            }
+                        }
+                        None
+                    })
+                    .collect();
+
+                // After merging the commit, Bob should see all 3 members
+                assert_eq!(bob_members_after.len(), 3, "Bob should see 3 members after merging commit");
+                assert!(bob_members_after.contains(&"alice".to_string()), "Alice should be member");
+                assert!(bob_members_after.contains(&"bob".to_string()), "Bob should be member");
+                assert!(bob_members_after.contains(&"carol".to_string()), "Carol should be member after commit merge");
+            }
+            _ => {
+                panic!("Expected StagedCommitMessage from Commit#2");
+            }
+        }
+    }
+
+    /// Test that commit message merging handles edge cases
+    ///
+    /// Verifies that the client correctly handles:
+    /// - StagedCommitMessage extraction
+    /// - Member count updates after commit merge
+    #[test]
+    fn test_commit_merge_updates_member_count() {
+        use tempfile::tempdir;
+        use crate::crypto;
+        use crate::provider::MlsProvider;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let provider = MlsProvider::new(&db_path).unwrap();
+
+        // Create two groups: one to send from, one to receive
+        // Group 1: Alice + Bob + Carol
+        let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
+        let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "group1").unwrap();
+
+        // Group 2: Another group where Bob is a member and Dave will join
+        let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
+        let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
+        let (add_bob_commit, bob_welcome, _) = crypto::add_members(
+            &mut alice_group,
+            &provider,
+            &alice_key,
+            &[bob_key_package.key_package()],
+        ).unwrap();
+        crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
+
+        let join_config = openmls::prelude::MlsGroupJoinConfig::default();
+        let ratchet_tree = Some(crypto::export_ratchet_tree(&alice_group));
+        let serialized_welcome = bob_welcome.tls_serialize_detached().unwrap();
+        let welcome_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_welcome.as_slice()).unwrap();
+        let mut bob_group = crypto::process_welcome_message(&provider, &join_config, &welcome_in, ratchet_tree).unwrap();
+
+        // Verify initial state: Bob's group has [Alice, Bob]
+        let initial_count = bob_group.members().count();
+        assert_eq!(initial_count, 2, "Bob should initially see 2 members");
+
+        // Now Alice adds Carol to the group
+        let (carol_cred, carol_key) = crypto::generate_credential_with_key("carol").unwrap();
+        let carol_key_package = crypto::generate_key_package_bundle(&carol_cred, &carol_key, &provider).unwrap();
+        let (add_carol_commit, _welcome, _) = crypto::add_members(
+            &mut alice_group,
+            &provider,
+            &alice_key,
+            &[carol_key_package.key_package()],
+        ).unwrap();
+        crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
+
+        // Bob receives the commit from Alice
+        let serialized_commit = add_carol_commit.tls_serialize_detached().unwrap();
+        let commit_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_commit.as_slice()).unwrap();
+        let protocol_msg = commit_in.try_into_protocol_message().unwrap();
+        let processed = bob_group.process_message(&provider, protocol_msg).unwrap();
+
+        // Process the StagedCommitMessage
+        match processed.into_content() {
+            openmls::prelude::ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+                bob_group.merge_staged_commit(&provider, *staged_commit).unwrap();
+                // After merging, verify Bob now sees 3 members
+                let updated_count = bob_group.members().count();
+                assert_eq!(
+                    updated_count, 3,
+                    "After merging commit, Bob should see 3 members (Alice, Bob, Carol)"
+                );
+            }
+            _ => {
+                panic!("Expected StagedCommitMessage");
+            }
+        }
     }
 
 }
