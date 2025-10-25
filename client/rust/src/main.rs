@@ -19,15 +19,27 @@ struct Args {
 
     /// Username for this client
     username: String,
+
+    /// Enable verbose logging (DEBUG level)
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+
+    // Initialize logger with appropriate level based on verbose flag
+    let log_level = if args.verbose {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
+    };
+
     env_logger::Builder::from_default_env()
+        .filter_level(log_level)
         .format_timestamp_millis()
         .init();
-
-    let args = Args::parse();
     
     info!("Starting MLS Chat Client");
     info!("Server: {}", args.server);
