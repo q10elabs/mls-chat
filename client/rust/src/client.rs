@@ -4,7 +4,7 @@
 /// Implements proper MLS invitation protocol with Welcome messages and ratchet tree exchange.
 
 use crate::api::ServerApi;
-use crate::cli::{format_control, format_message, run_input_loop};
+use crate::cli::{format_control, format_message};
 use crate::crypto;
 use crate::error::{Result, ClientError};
 use crate::identity::IdentityManager;
@@ -347,131 +347,6 @@ impl MlsClient {
         Ok(())
     }
 
-
-    /// Process incoming envelope (discriminated MLS message type)
-    ///
-    /// Routes the message based on its type:
-    /// - ApplicationMessage: Decrypt and display
-    /// - WelcomeMessage: Process Welcome and join group
-    /// - CommitMessage: Process commit and update member list
-    ///
-    /// # Errors
-    /// * Envelope type-specific errors
-    pub async fn process_incoming_envelope(&mut self) -> Result<()> {
-        if let Some(websocket) = &mut self.websocket {
-            if let Some(envelope) = websocket.next_envelope().await? {
-                match envelope {
-                    MlsMessageEnvelope::ApplicationMessage {
-                        sender,
-                        group_id,
-                        encrypted_content,
-                    } => {
-                        // Use the dedicated message processing module
-                        if let Some(group) = &mut self.mls_group {
-                            match process_application_message(
-                                &sender,
-                                &group_id,
-                                &encrypted_content,
-                                group,
-                                &self.mls_provider,
-                            ).await {
-                                Ok(Some(decrypted_text)) => {
-                                    // Use human-readable group name instead of base64 group ID
-                                    println!("{}", format_display_message(&self.group_name, &sender, &decrypted_text));
-                                }
-                                Ok(None) => {
-                                    log::debug!("Received non-application message in envelope");
-                                }
-                                Err(e) => {
-                                    log::error!("Failed to process message: {}", e);
-                                    // Use human-readable group name for error display too
-                                    println!("{}", format_display_message(&self.group_name, &sender, "[decryption failed]"));
-                                }
-                            }
-                        }
-                    }
-                    MlsMessageEnvelope::WelcomeMessage {
-                        inviter,
-                        welcome_blob,
-                        ratchet_tree_blob,
-                    } => {
-                        // Process Welcome message (group_name is extracted from encrypted metadata)
-                        match self.handle_welcome_message(&inviter, &welcome_blob, &ratchet_tree_blob).await {
-                            Ok(()) => {
-                                log::info!("Successfully processed Welcome message from {}", inviter);
-                            }
-                            Err(e) => {
-                                log::error!("Failed to process Welcome message: {}", e);
-                            }
-                        }
-                    }
-                    MlsMessageEnvelope::CommitMessage {
-                        group_id: _group_id_b64,
-                        sender,
-                        commit_blob,
-                    } => {
-                        // Process Commit message
-                        // Per MLS protocol: members learn about new group members from Commits (docs/membership-learn.md)
-                        // Note: group_id in envelope is base64-encoded MLS group ID
-                        // We use self.group_name (human-readable) for display
-                        log::info!("Received Commit from {} for group {}", sender, self.group_name);
-
-                        match general_purpose::STANDARD.decode(&commit_blob) {
-                            Ok(commit_bytes) => {
-                                match openmls::prelude::MlsMessageIn::tls_deserialize(&mut commit_bytes.as_slice()) {
-                                    Ok(commit_message_in) => {
-                                        if let Some(group) = &mut self.mls_group {
-                                            match crypto::process_message(group, &self.mls_provider, &commit_message_in) {
-                                                Ok(processed_commit) => {
-                                                    // Extract and merge the staged commit to update group state
-                                                    match processed_commit.into_content() {
-                                                        openmls::prelude::ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
-                                                            // Merge the staged commit to apply the group changes
-                                                            match group.merge_staged_commit(&self.mls_provider, *staged_commit) {
-                                                                Ok(()) => {
-                                                                    // Group state is now updated - member list reflects latest changes
-                                                                    let member_count = group.members().count();
-                                                                    log::info!(
-                                                                        "Merged Commit from {}, group now has {} members",
-                                                                        sender,
-                                                                        member_count
-                                                                    );
-                                                                    println!(
-                                                                        "{}",
-                                                                        format_display_message(&self.group_name, &sender, "[updated group membership]")
-                                                                    );
-                                                                }
-                                                                Err(e) => {
-                                                                    log::error!("Failed to merge Commit: {}", e);
-                                                                }
-                                                            }
-                                                        }
-                                                        _ => {
-                                                            log::debug!("Received non-commit handshake message: ignoring");
-                                                        }
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    log::error!("Failed to process Commit: {}", e);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::error!("Failed to deserialize Commit: {}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                log::error!("Failed to decode Commit: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 
     /// Invite a user to the group
     ///
@@ -862,68 +737,233 @@ impl MlsClient {
 
     /// Run the main client loop
     ///
-    /// Spawns a background task to handle incoming messages and runs an interactive CLI
-    /// that dispatches commands to the appropriate client methods.
+    /// Implements concurrent I/O using `tokio::select!`:
+    /// - Concurrently handles user input from stdin and incoming WebSocket messages
+    /// - Incoming messages are displayed immediately (may interrupt user typing)
+    /// - Processes all commands asynchronously (invite, list, message, quit)
+    /// - Continues on command errors, exits only on Ctrl+C (EOF) or /quit
     pub async fn run(&mut self) -> Result<()> {
+        use crate::cli::read_line_async;
+        use tokio::io::BufReader;
+
         println!("Connected to group: {}", self.group_name);
         println!("Commands: /invite <username>, /list, /quit");
         println!("Type messages to send to the group");
 
-        // Get mutable websocket for the background task
-        let mut websocket = self.websocket.take()
+        // Ensure WebSocket is connected
+        let _websocket = self
+            .websocket
+            .as_mut()
             .ok_or_else(|| ClientError::Config("WebSocket not connected".to_string()))?;
 
-        // Spawn task for incoming messages (using channels for communication)
-        let (_tx, _rx) = tokio::sync::mpsc::unbounded_channel::<MlsMessageEnvelope>();
-        tokio::spawn(async move {
-            loop {
-                match websocket.next_envelope().await {
-                    Ok(Some(_envelope)) => {
-                        // Message received - in a full implementation would process it here
+        // Initialize async stdin reader
+        let stdin = tokio::io::stdin();
+        let mut stdin_reader = BufReader::new(stdin);
+
+        // Main concurrent I/O loop
+        loop {
+            tokio::select! {
+                // === Handle user input ===
+                user_input = read_line_async(&mut stdin_reader) => {
+                    match user_input {
+                        Ok(Some(input)) => {
+                            // Parse and process the command
+                            match crate::cli::parse_command(&input) {
+                                Ok(command) => {
+                                    match command {
+                                        Command::Invite(invitee) => {
+                                            match self.invite_user(&invitee).await {
+                                                Ok(()) => {
+                                                    log::info!("Invited {} to the group", invitee);
+                                                }
+                                                Err(e) => {
+                                                    log::error!("Failed to invite {}: {}", invitee, e);
+                                                    eprintln!("Error: Failed to invite {}: {}", invitee, e);
+                                                }
+                                            }
+                                        }
+                                        Command::List => {
+                                            let members = self.list_members();
+                                            if members.is_empty() {
+                                                println!("{}", format_control(&self.group_name, "no members yet"));
+                                            } else {
+                                                println!("{}", format_control(
+                                                    &self.group_name,
+                                                    &format!("members: {}", members.join(", "))
+                                                ));
+                                            }
+                                        }
+                                        Command::Message(text) => {
+                                            match self.send_message(&text).await {
+                                                Ok(()) => {
+                                                    log::debug!("Message sent successfully");
+                                                }
+                                                Err(e) => {
+                                                    log::error!("Failed to send message: {}", e);
+                                                    eprintln!("Error: Failed to send message: {}", e);
+                                                }
+                                            }
+                                        }
+                                        Command::Quit => {
+                                            println!("Goodbye!");
+                                            return Ok(());
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("Invalid command: {}", e);
+                                    eprintln!("Error: Invalid command: {}", e);
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            // EOF (Ctrl+D)
+                            log::info!("EOF received, exiting");
+                            println!("Goodbye!");
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            log::error!("Error reading input: {}", e);
+                            eprintln!("Error reading input: {}", e);
+                            return Err(e);
+                        }
                     }
-                    Ok(None) => {
-                        log::info!("WebSocket connection closed");
-                        break;
+                }
+
+                // === Handle incoming messages ===
+                incoming = self.websocket.as_mut().unwrap().next_envelope() => {
+                    match incoming {
+                        Ok(Some(envelope)) => {
+                            // Process the incoming envelope
+                            match self.process_incoming_envelope_from(envelope).await {
+                                Ok(()) => {
+                                    // Message processed successfully
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to process incoming message: {}", e);
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            log::info!("WebSocket connection closed by server");
+                            eprintln!("WebSocket connection closed");
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            log::error!("WebSocket error: {}", e);
+                            eprintln!("WebSocket error: {}", e);
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Process an incoming envelope (helper for run loop)
+    ///
+    /// This is the logic from `process_incoming_envelope()` but separated
+    /// to be called from the `tokio::select!` loop where we have the right
+    /// borrowing semantics.
+    async fn process_incoming_envelope_from(&mut self, envelope: MlsMessageEnvelope) -> Result<()> {
+        match envelope {
+            MlsMessageEnvelope::ApplicationMessage {
+                sender,
+                group_id,
+                encrypted_content,
+            } => {
+                // Use the dedicated message processing module
+                if let Some(group) = &mut self.mls_group {
+                    match process_application_message(
+                        &sender,
+                        &group_id,
+                        &encrypted_content,
+                        group,
+                        &self.mls_provider,
+                    ).await {
+                        Ok(Some(decrypted_text)) => {
+                            println!("{}", format_display_message(&self.group_name, &sender, &decrypted_text));
+                        }
+                        Ok(None) => {
+                            log::debug!("Received non-application message in envelope");
+                        }
+                        Err(e) => {
+                            log::error!("Failed to process message: {}", e);
+                            println!("{}", format_display_message(&self.group_name, &sender, "[decryption failed]"));
+                        }
+                    }
+                }
+            }
+            MlsMessageEnvelope::WelcomeMessage {
+                inviter,
+                welcome_blob,
+                ratchet_tree_blob,
+            } => {
+                match self.handle_welcome_message(&inviter, &welcome_blob, &ratchet_tree_blob).await {
+                    Ok(()) => {
+                        log::info!("Successfully processed Welcome message from {}", inviter);
                     }
                     Err(e) => {
-                        log::error!("Error receiving message: {}", e);
-                        break;
+                        log::error!("Failed to process Welcome message: {}", e);
                     }
                 }
             }
-        });
+            MlsMessageEnvelope::CommitMessage {
+                group_id: _group_id_b64,
+                sender,
+                commit_blob,
+            } => {
+                log::info!("Received Commit from {} for group {}", sender, self.group_name);
 
-        // Run input loop
-        let group_name = self.group_name.clone();
-        let username = self.username.clone();
-
-        run_input_loop(|command| {
-            match command {
-                Command::Invite(_invitee) => {
-                    // Note: This would need to be handled with a different pattern
-                    // since run_input_loop takes a non-async closure.
-                    // For now, we document this as a limitation.
-                    println!("{}", format_control(
-                        &group_name,
-                        &format!("(async operation required for invite - use client API directly)")
-                    ));
-                }
-                Command::List => {
-                    // Note: This would also require async to update member list
-                    println!("Group members: (use /list from async context)");
-                }
-                Command::Message(_text) => {
-                    // Note: This would also require async to send encrypted message
-                    println!("{}", format_message(&group_name, &username, "(async operation required for send)"));
-                }
-                Command::Quit => {
-                    println!("Goodbye!");
-                    std::process::exit(0);
+                match general_purpose::STANDARD.decode(&commit_blob) {
+                    Ok(commit_bytes) => {
+                        match openmls::prelude::MlsMessageIn::tls_deserialize(&mut commit_bytes.as_slice()) {
+                            Ok(commit_message_in) => {
+                                if let Some(group) = &mut self.mls_group {
+                                    match crypto::process_message(group, &self.mls_provider, &commit_message_in) {
+                                        Ok(processed_commit) => {
+                                            match processed_commit.into_content() {
+                                                openmls::prelude::ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+                                                    match group.merge_staged_commit(&self.mls_provider, *staged_commit) {
+                                                        Ok(()) => {
+                                                            let member_count = group.members().count();
+                                                            log::info!(
+                                                                "Merged Commit from {}, group now has {} members",
+                                                                sender,
+                                                                member_count
+                                                            );
+                                                            println!(
+                                                                "{}",
+                                                                format_display_message(&self.group_name, &sender, "[updated group membership]")
+                                                            );
+                                                        }
+                                                        Err(e) => {
+                                                            log::error!("Failed to merge Commit: {}", e);
+                                                        }
+                                                    }
+                                                }
+                                                _ => {
+                                                    log::debug!("Received non-commit handshake message: ignoring");
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::error!("Failed to process Commit: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("Failed to deserialize Commit: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to decode Commit: {}", e);
+                    }
                 }
             }
-            Ok(())
-        }).await?;
-
+        }
         Ok(())
     }
 }
@@ -1172,7 +1212,7 @@ mod tests {
         // === Alice invites Carol (this is the key part - Bob must process the commit) ===
         let (carol_cred, carol_key) = crypto::generate_credential_with_key("carol").unwrap();
         let carol_key_package = crypto::generate_key_package_bundle(&carol_cred, &carol_key, &provider).unwrap();
-        let (commit_2, welcome_2, _) = crypto::add_members(
+        let (commit_2, _welcome_2, _) = crypto::add_members(
             &mut alice_group,
             &provider,
             &alice_key,
@@ -1245,7 +1285,7 @@ mod tests {
         // Group 2: Another group where Bob is a member and Dave will join
         let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
         let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
-        let (add_bob_commit, bob_welcome, _) = crypto::add_members(
+        let (_add_bob_commit, bob_welcome, _) = crypto::add_members(
             &mut alice_group,
             &provider,
             &alice_key,

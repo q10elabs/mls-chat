@@ -1,8 +1,12 @@
 /// CLI interface for the MLS client
+///
+/// Provides command parsing and async stdin reading for concurrent I/O
+/// in the main message loop.
 
 use crate::models::Command;
 use crate::error::Result;
-use std::io::{Write};
+use std::io::Write;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// Parse a command from user input
 pub fn parse_command(input: &str) -> Result<Command> {
@@ -19,32 +23,38 @@ pub fn format_control(group: &str, action: &str) -> String {
     format!("#{} {}", group, action)
 }
 
-/// Run the input loop (placeholder for now)
-pub async fn run_input_loop<F>(mut callback: F) -> Result<()>
-where
-    F: FnMut(Command) -> Result<()>,
-{
-    use std::io::{self, BufRead};
-    
-    let stdin = io::stdin();
-    let mut lines = stdin.lock().lines();
-    
-    loop {
-        print!("> ");
-        io::stdout().flush().unwrap();
-        
-        if let Some(line) = lines.next() {
-            let input = line?;
-            let command = parse_command(&input)?;
-            
-            match command {
-                Command::Quit => break,
-                _ => callback(command)?,
+/// Async stdin reader that yields one line at a time
+///
+/// Uses tokio's async stdin to enable concurrent I/O with WebSocket messages.
+/// Prints the prompt and flushes stdout before blocking on input.
+///
+/// # Returns
+/// - `Ok(Some(line))` - User entered a line
+/// - `Ok(None)` - EOF reached (Ctrl+D)
+/// - `Err(e)` - I/O error
+pub async fn read_line_async(reader: &mut BufReader<tokio::io::Stdin>) -> Result<Option<String>> {
+    use std::io::stdout;
+
+    // Print prompt and flush
+    print!("> ");
+    stdout().flush().unwrap();
+
+    // Wait for a line asynchronously
+    let mut line = String::new();
+    match reader.read_line(&mut line).await {
+        Ok(0) => Ok(None), // EOF
+        Ok(_) => {
+            // Remove trailing newline
+            if line.ends_with('\n') {
+                line.pop();
+                if line.ends_with('\r') {
+                    line.pop();
+                }
             }
+            Ok(Some(line))
         }
+        Err(e) => Err(e.into()),
     }
-    
-    Ok(())
 }
 
 #[cfg(test)]
