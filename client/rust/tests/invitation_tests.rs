@@ -497,7 +497,27 @@ async fn test_list_members_after_invitation() {
 
 /// Test 14: list_members() with three-party group
 ///
-/// Verifies member list accuracy in multi-party scenario
+/// Verifies member list accuracy with sequential invitations.
+///
+/// This test demonstrates MLS protocol behavior:
+/// - The Welcome message to a new member contains the full group state at that invitation epoch
+/// - New members join at the epoch where they were added
+/// - The Commit message establishes new epochs for existing members
+/// - Sequential invitations work correctly
+//////
+/// For all members to see each other, they need to receive the Welcome that includes the full
+/// roster, OR actively exchange messages causing commits that update everyone's view.
+/// This is documented in docs/membership-learn.md - server fans out Commits, but the
+/// recipient's ability to process them depends on epoch synchronization.
+///
+/// Epoch progression:
+/// - Epoch E: Alice only
+/// - Alice invites Bob → Commit#1 → Epoch E+1: [Alice, Bob]
+/// - Bob processes Welcome → joins at Epoch E+1: [Alice, Bob]
+/// - Alice invites Carol → Commit#2 → Epoch E+2: [Alice, Bob, Carol]
+/// - Carol processes Welcome → joins at Epoch E+2: [Alice, Bob, Carol]
+///
+/// Result: Alice, Bob and Carol see [Alice, Bob, Carol]
 #[tokio::test]
 async fn test_list_members_three_party_group() {
     use mls_chat_client::crypto;
@@ -511,7 +531,7 @@ async fn test_list_members_three_party_group() {
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
     let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
-    // === Bob joins ===
+    // === Step 1: Alice invites Bob ===
     let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
     let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
     let (_commit_1, welcome_1, _) = crypto::add_members(
@@ -522,16 +542,20 @@ async fn test_list_members_three_party_group() {
     ).unwrap();
     crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
 
+    // Bob joins via Welcome - this puts Bob into the same epoch as Alice (E+1)
+    // The Welcome message contains the group state at the time the commit was made
     let ratchet_tree_1 = Some(crypto::export_ratchet_tree(&alice_group));
     let join_config = openmls::prelude::MlsGroupJoinConfig::default();
     let serialized_1 = welcome_1.tls_serialize_detached().unwrap();
     let welcome_1_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_1.as_slice()).unwrap();
-    let bob_group = crypto::process_welcome_message(&provider, &join_config, &welcome_1_in, ratchet_tree_1).unwrap();
+    let mut bob_group = crypto::process_welcome_message(&provider, &join_config, &welcome_1_in, ratchet_tree_1).unwrap();
 
-    // === Carol joins ===
+    // Note: Bob is now at epoch E+1 after processing Welcome: [Alice, Bob]
+
+    // === Step 2: Alice invites Carol ===
     let (carol_cred, carol_key) = crypto::generate_credential_with_key("carol").unwrap();
     let carol_key_package = crypto::generate_key_package_bundle(&carol_cred, &carol_key, &provider).unwrap();
-    let (_commit_2, welcome_2, _) = crypto::add_members(
+    let (commit_2, welcome_2, _) = crypto::add_members(
         &mut alice_group,
         &provider,
         &alice_key,
@@ -539,17 +563,37 @@ async fn test_list_members_three_party_group() {
     ).unwrap();
     crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
 
+    // === Bob receives commit_2 ===
+    // According to MLS protocol (docs/membership-learn.md):
+    // "everyone learns about new members from the Commit that adds them—not from the Welcome"
+    // Bob must process the Commit that Alice created to discover Carol and move to epoch E+2
+    let serialized_commit_2 = commit_2.tls_serialize_detached().unwrap();
+    let commit_2_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_commit_2.as_slice()).unwrap();
+    let protocol_msg_2 = commit_2_in.try_into_protocol_message().unwrap();
+    let processed_commit_2 = bob_group.process_message(&provider, protocol_msg_2).unwrap();
+
+    // Extract and merge the staged commit - this advances Bob to epoch E+2
+    if let openmls::prelude::ProcessedMessageContent::StagedCommitMessage(staged_commit_2) =
+        processed_commit_2.into_content()
+    {
+        bob_group.merge_staged_commit(&provider, *staged_commit_2).unwrap();
+    } else {
+        panic!("Expected StagedCommitMessage from Commit#2");
+    }
+    // Now Bob is at epoch E+2 and knows about [Alice, Bob, Carol]
+
+    // Carol joins via Welcome (separate from the first invite, she gets a Welcome that includes both Alice and Bob)
+    // The Welcome message at this point includes the full group state at epoch E+2 (after commit_2)
     let ratchet_tree_2 = Some(crypto::export_ratchet_tree(&alice_group));
     let serialized_2 = welcome_2.tls_serialize_detached().unwrap();
     let welcome_2_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_2.as_slice()).unwrap();
     let carol_group = crypto::process_welcome_message(&provider, &join_config, &welcome_2_in, ratchet_tree_2).unwrap();
 
+    // After Carol processes the Welcome, she's at epoch E+2 and knows about Alice, Bob, and herself
+    // (because the Welcome was created after commit_2 which added her alongside knowledge of Bob)
+
     // === Verify member lists ===
-    // Note: Bob and Carol will only have their latest known state
-    // Alice invited both sequentially, so:
-    // - Alice knows about all 3 members (she added them all)
-    // - Bob knows about at least Alice and himself
-    // - Carol knows about at least Alice and herself
+    // After all commits are processed, all three should see all three members
 
     let extract_members = |group: &openmls::prelude::MlsGroup| -> Vec<String> {
         group
@@ -573,21 +617,30 @@ async fn test_list_members_three_party_group() {
     let bob_members = extract_members(&bob_group);
     let carol_members = extract_members(&carol_group);
 
-    // Alice should have all 3 members (she's the one doing the inviting)
-    assert_eq!(alice_members.len(), 3, "Alice should have 3 members");
+    // Verify the epoch-based membership constraints
+
+    // === Alice's view ===
+    // Alice is the inviter - she created both commits and knows about everyone
+    assert_eq!(alice_members.len(), 3, "Alice should have 3 members (she created and invited them)");
     assert!(alice_members.contains(&"alice".to_string()), "Alice should be member");
-    assert!(alice_members.contains(&"bob".to_string()), "Alice should know about Bob");
-    assert!(alice_members.contains(&"carol".to_string()), "Alice should know about Carol");
+    assert!(alice_members.contains(&"bob".to_string()), "Alice should know about Bob (invited in epoch E+1)");
+    assert!(alice_members.contains(&"carol".to_string()), "Alice should know about Carol (invited in epoch E+2)");
 
-    // Bob should have at least Alice and himself
-    assert!(bob_members.len() >= 2, "Bob should have at least 2 members (himself and Alice)");
-    assert!(bob_members.contains(&"alice".to_string()), "Bob should know about Alice");
-    assert!(bob_members.contains(&"bob".to_string()), "Bob should be himself");
+    // === Bob's view ===
+    // Should know about all 3 members.
+    assert_eq!(bob_members.len(), 3, "Bob should have 3 members");
+    assert!(bob_members.contains(&"alice".to_string()), "Bob knows Alice (from Welcome)");
+    assert!(bob_members.contains(&"bob".to_string()), "Bob knows himself (from Welcome)");
+    assert!(bob_members.contains(&"carol".to_string()), "Bob knows Carol (from commit2)");
 
-    // Carol should have at least Alice and herself
-    assert!(carol_members.len() >= 2, "Carol should have at least 2 members (herself and Alice)");
-    assert!(carol_members.contains(&"alice".to_string()), "Carol should know about Alice");
-    assert!(carol_members.contains(&"carol".to_string()), "Carol should be herself");
+    // === Carol's view ===
+    // Carol joined at epoch E+2 via Welcome created AFTER commit_2
+    // The Welcome at epoch E+2 contains the full roster: [Alice, Bob, Carol]
+    // So Carol sees all three members
+    assert_eq!(carol_members.len(), 3, "Carol should have 3 members (Welcome created at epoch E+2 includes full roster)");
+    assert!(carol_members.contains(&"alice".to_string()), "Carol knows Alice (from Welcome at epoch E+2)");
+    assert!(carol_members.contains(&"bob".to_string()), "Carol knows Bob (from Welcome at epoch E+2)");
+    assert!(carol_members.contains(&"carol".to_string()), "Carol knows herself (from Welcome)");
 }
 
 /// Test 15: list_members() preserves member order
