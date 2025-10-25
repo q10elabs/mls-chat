@@ -383,14 +383,16 @@ impl MlsClient {
                                 &self.mls_provider,
                             ).await {
                                 Ok(Some(decrypted_text)) => {
-                                    println!("{}", format_display_message(&group_id, &sender, &decrypted_text));
+                                    // Use human-readable group name instead of base64 group ID
+                                    println!("{}", format_display_message(&self.group_name, &sender, &decrypted_text));
                                 }
                                 Ok(None) => {
                                     log::debug!("Received non-application message in envelope");
                                 }
                                 Err(e) => {
                                     log::error!("Failed to process message: {}", e);
-                                    println!("{}", format_display_message(&group_id, &sender, "[decryption failed]"));
+                                    // Use human-readable group name for error display too
+                                    println!("{}", format_display_message(&self.group_name, &sender, "[decryption failed]"));
                                 }
                             }
                         }
@@ -651,13 +653,33 @@ impl MlsClient {
 
     /// List group members
     ///
-    /// Returns the members list stored in metadata. In a real implementation,
-    /// this would come from the actual group state in the MLS provider.
+    /// Returns the members from the actual MLS group state.
+    /// Falls back to metadata store if MLS group is not loaded.
     pub fn list_members(&self) -> Vec<String> {
-        // Load from metadata store (or reconstruct from MLS group state)
-        self.metadata_store
-            .get_group_members(&self.username, &self.group_name)
-            .unwrap_or_else(|_| vec![self.username.clone()])
+        // Try to get members from the actual MLS group state
+        if let Some(group) = &self.mls_group {
+            group
+                .members()
+                .filter_map(|member| {
+                    // Extract username from BasicCredential identity
+                    match member.credential.credential_type() {
+                        openmls::prelude::CredentialType::Basic => {
+                            if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
+                                String::from_utf8(basic_cred.identity().to_vec()).ok()
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                })
+                .collect()
+        } else {
+            // Fallback to metadata store if MLS group is not loaded
+            self.metadata_store
+                .get_group_members(&self.username, &self.group_name)
+                .unwrap_or_else(|_| vec![self.username.clone()])
+        }
     }
 
     /// Test helper: get reference to identity
