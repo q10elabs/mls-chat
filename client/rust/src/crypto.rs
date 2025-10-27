@@ -1,4 +1,4 @@
-/// MLS cryptographic operations using OpenMLS
+//! MLS cryptographic operations using OpenMLS
 
 use crate::error::{Result, MlsError};
 use openmls::prelude::*;

@@ -1,6 +1,6 @@
-/// Custom extension for group-level metadata
-/// Stored in GroupContext extensions (encrypted in group state)
-/// Type ID: 0xff00 (private use range per RFC 9420, well into private use area)
+//! Custom extension for group-level metadata
+//! Stored in GroupContext extensions (encrypted in group state)
+//! Type ID: 0xff00 (private use range per RFC 9420, well into private use area)
 
 use serde::{Deserialize, Serialize};
 

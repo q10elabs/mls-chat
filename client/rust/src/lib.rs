@@ -1,5 +1,5 @@
-/// MLS Chat Client Library
-/// Provides MLS group messaging functionality with OpenMLS
+//! MLS Chat Client Library
+//! Provides MLS group messaging functionality with OpenMLS
 
 pub mod api;
 pub mod cli;
@@ -9,6 +9,7 @@ pub mod error;
 pub mod extensions;
 pub mod identity;
 pub mod message_processing;
+pub mod mls;
 pub mod models;
 pub mod provider;
 pub mod storage;

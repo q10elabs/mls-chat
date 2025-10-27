@@ -1,4 +1,4 @@
-/// Error types for the MLS chat client
+//! Error types for the MLS chat client
 
 use thiserror::Error;
 

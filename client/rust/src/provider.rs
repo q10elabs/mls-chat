@@ -1,9 +1,9 @@
-/// OpenMLS provider implementation using SQLite for persistence
-///
-/// This module implements the OpenMlsProvider trait, integrating:
-/// - RustCrypto for cryptographic operations
-/// - SqliteStorageProvider for persistent group state
-/// - Automatic serialization/deserialization of MLS state
+//! OpenMLS provider implementation using SQLite for persistence
+//!
+//! This module implements the OpenMlsProvider trait, integrating:
+//! - RustCrypto for cryptographic operations
+//! - SqliteStorageProvider for persistent group state
+//! - Automatic serialization/deserialization of MLS state
 
 use crate::error::{Result, ClientError};
 use openmls::prelude::*;

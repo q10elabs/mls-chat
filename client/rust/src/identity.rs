@@ -1,7 +1,7 @@
-/// Identity persistence and management
-///
-/// Handles persistent storage and recovery of user identities (credentials and signature keys)
-/// using the OpenMLS storage provider. Each username maintains a unique cryptographic identity.
+//! Identity persistence and management
+//!
+//! Handles persistent storage and recovery of user identities (credentials and signature keys)
+//! using the OpenMLS storage provider. Each username maintains a unique cryptographic identity.
 
 use crate::error::{Result, ClientError};
 use crate::provider::MlsProvider;

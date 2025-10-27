@@ -1,4 +1,4 @@
-/// Data models and DTOs for the MLS client
+//! Data models and DTOs for the MLS client
 
 use serde::{Deserialize, Serialize};
 

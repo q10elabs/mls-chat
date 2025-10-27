@@ -1,10 +1,10 @@
-/// Enhanced message processing for MLS client
-///
-/// This module provides improved message processing capabilities with:
-/// - Proper plaintext extraction from application messages
-/// - Comprehensive error handling
-/// - Support for all MLS message types
-/// - Detailed logging and debugging
+//! Enhanced message processing for MLS client
+//!
+//! This module provides improved message processing capabilities with:
+//! - Proper plaintext extraction from application messages
+//! - Comprehensive error handling
+//! - Support for all MLS message types
+//! - Detailed logging and debugging
 
 use crate::error::{Result, ClientError};
 use crate::models::IncomingMessage;

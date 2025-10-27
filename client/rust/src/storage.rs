@@ -1,8 +1,8 @@
-/// Local storage for MLS client metadata
-///
-/// This module handles only application-level metadata storage.
-/// MLS group state is automatically managed by the OpenMlsProvider.
-/// Member lists are derived from MlsGroup state, not stored separately.
+//! Local storage for MLS client metadata
+//!
+//! This module handles only application-level metadata storage.
+//! MLS group state is automatically managed by the OpenMlsProvider.
+//! Member lists are derived from MlsGroup state, not stored separately.
 
 use crate::error::Result;
 use rusqlite::Connection;

@@ -1,4 +1,4 @@
-/// WebSocket message handler for real-time communication
+//! WebSocket message handler for real-time communication
 
 use crate::error::Result;
 use crate::models::MlsMessageEnvelope;
@@ -22,10 +22,10 @@ impl MessageHandler {
     /// Connect to the server WebSocket
     pub async fn connect(server_url: &str, username: &str) -> Result<Self> {
         // Extract host and port from HTTP URL
-        let url = if server_url.starts_with("http://") {
-            format!("ws://{}/ws/{}", &server_url[7..], username)
-        } else if server_url.starts_with("https://") {
-            format!("wss://{}/ws/{}", &server_url[8..], username)
+        let url = if let Some(stripped) = server_url.strip_prefix("http://") {
+            format!("ws://{}/ws/{}", stripped, username)
+        } else if let Some(stripped) = server_url.strip_prefix("https://") {
+            format!("wss://{}/ws/{}", stripped, username)
         } else {
             format!("ws://{}/ws/{}", server_url, username)
         };
@@ -51,7 +51,7 @@ impl MessageHandler {
             let mut read = read;
             while let Some(msg) = read.next().await {
                 if let Ok(msg) = msg {
-                    if let Err(_) = tx_out.unbounded_send(msg) {
+                    if tx_out.unbounded_send(msg).is_err() {
                         log::error!("Failed to forward incoming message");
                         break;
                     }

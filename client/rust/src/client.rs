@@ -1,7 +1,7 @@
-/// Main MLS client orchestrator
-///
-/// Coordinates MLS operations using OpenMlsProvider for automatic group state persistence.
-/// Implements proper MLS invitation protocol with Welcome messages and ratchet tree exchange.
+//! Main MLS client orchestrator
+//!
+//! Coordinates MLS operations using OpenMlsProvider for automatic group state persistence.
+//! Implements proper MLS invitation protocol with Welcome messages and ratchet tree exchange.
 
 use crate::api::ServerApi;
 use crate::cli::{format_control, format_message};
@@ -234,7 +234,7 @@ impl MlsClient {
                                     "Group metadata exists but group not found in storage. Recreating group."
                                 );
                                 let group = crypto::create_group_with_config(
-                                    &credential_with_key,
+                                    credential_with_key,
                                     sig_key,
                                     &self.mls_provider,
                                     &self.group_name,
@@ -260,7 +260,7 @@ impl MlsClient {
                     Ok(None) => {
                         // Group doesn't exist - create it
                         let group = crypto::create_group_with_config(
-                            &credential_with_key,
+                            credential_with_key,
                             sig_key,
                             &self.mls_provider,
                             &self.group_name,
@@ -282,7 +282,7 @@ impl MlsClient {
                         // Error checking storage - create new group as fallback
                         log::warn!("Error checking group mapping: {}. Creating new group.", e);
                         let group = crypto::create_group_with_config(
-                            &credential_with_key,
+                            credential_with_key,
                             sig_key,
                             &self.mls_provider,
                             &self.group_name,
@@ -368,7 +368,7 @@ impl MlsClient {
                     println!("{}", format_message(&self.group_name, &self.username, text));
                 } else {
                     log::error!("Cannot send message: group not connected");
-                    return Err(crate::error::ClientError::Mls(crate::error::MlsError::GroupNotFound).into());
+                    return Err(crate::error::ClientError::Mls(crate::error::MlsError::GroupNotFound));
                 }
             }
         }
@@ -457,7 +457,7 @@ impl MlsClient {
                     websocket.send_envelope(&welcome_envelope).await?;
                     log::info!("Sent Welcome message to {} (ratchet tree included)", invitee_username);
                 } else {
-                    return Err(ClientError::Mls(crate::error::MlsError::GroupNotFound).into());
+                    return Err(ClientError::Mls(crate::error::MlsError::GroupNotFound));
                 }
 
                 // Broadcast Commit to all existing members so they learn about the new member
@@ -484,7 +484,7 @@ impl MlsClient {
                 }
             } else {
                 log::error!("Cannot invite user: group not connected");
-                return Err(ClientError::Mls(crate::error::MlsError::GroupNotFound).into());
+                return Err(ClientError::Mls(crate::error::MlsError::GroupNotFound));
             }
         }
 
@@ -614,7 +614,7 @@ impl MlsClient {
         // After accepting Welcome, the client must subscribe to the group's message broadcasts.
         // Must subscribe using the MLS group_id (base64-encoded), not the human-readable group name,
         // because application messages are routed by group_id on the server.
-        let mls_group_id_b64 = general_purpose::STANDARD.encode(&self.group_id.as_ref().unwrap());
+        let mls_group_id_b64 = general_purpose::STANDARD.encode(self.group_id.as_ref().unwrap());
         self.websocket
             .as_ref()
             .ok_or_else(|| {
@@ -820,7 +820,7 @@ impl MlsClient {
             _ => {
                 return Err(ClientError::Mls(crate::error::MlsError::OpenMls(
                     "Remote key package must use BasicCredential".to_string()
-                )).into());
+                )));
             }
         };
 
@@ -839,7 +839,7 @@ impl MlsClient {
             _ => {
                 return Err(ClientError::Mls(crate::error::MlsError::OpenMls(
                     "Local credential must be BasicCredential".to_string()
-                )).into());
+                )));
             }
         };
 
@@ -864,7 +864,7 @@ impl MlsClient {
                     String::from_utf8_lossy(remote_credential.identity()),
                     String::from_utf8_lossy(local_credential.identity())
                 )
-            )).into())
+            )))
         }
     }
 

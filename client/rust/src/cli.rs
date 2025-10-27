@@ -1,7 +1,7 @@
-/// CLI interface for the MLS client
-///
-/// Provides command parsing and async stdin reading for concurrent I/O
-/// in the main message loop.
+//! CLI interface for the MLS client
+//!
+//! Provides command parsing and async stdin reading for concurrent I/O
+//! in the main message loop.
 
 use crate::models::Command;
 use crate::error::Result;
@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// Parse a command from user input
 pub fn parse_command(input: &str) -> Result<Command> {
-    Command::parse(input).map_err(|e| crate::error::ClientError::InvalidCommand(e))
+    Command::parse(input).map_err(crate::error::ClientError::InvalidCommand)
 }
 
 /// Format a message for display

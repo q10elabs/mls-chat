@@ -1,4 +1,4 @@
-/// Server API client for REST endpoints
+//! Server API client for REST endpoints
 
 use crate::error::{Result, NetworkError};
 use reqwest::{Client, StatusCode};
@@ -60,7 +60,7 @@ impl ServerApi {
         };
 
         let response = self.client
-            .post(&format!("{}/users", self.base_url))
+            .post(format!("{}/users", self.base_url))
             .json(&request)
             .send()
             .await?;
@@ -110,7 +110,7 @@ impl ServerApi {
     /// Get a user's KeyPackage from the server
     pub async fn get_user_key(&self, username: &str) -> Result<Vec<u8>> {
         let response = self.client
-            .get(&format!("{}/users/{}", self.base_url, username))
+            .get(format!("{}/users/{}", self.base_url, username))
             .send()
             .await?;
 
@@ -127,7 +127,7 @@ impl ServerApi {
     /// Check if the server is healthy
     pub async fn health_check(&self) -> Result<()> {
         let response = self.client
-            .get(&format!("{}/health", self.base_url))
+            .get(format!("{}/health", self.base_url))
             .send()
             .await?;
 
