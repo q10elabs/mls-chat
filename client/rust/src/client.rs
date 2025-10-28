@@ -103,7 +103,7 @@ impl MlsClient {
 
         // Try to load or create membership for the initial group
         use crate::mls::membership::MlsMembership;
-        let membership = MlsMembership::connect_to_existing_group(
+        let membership = MlsMembership::create_new_group(
             &self.initial_group_name,
             user,
             self.connection.get_provider(),

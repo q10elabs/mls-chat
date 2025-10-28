@@ -268,6 +268,105 @@ impl<'a> MlsMembership<'a> {
         })
     }
 
+    /// Create a new group
+    ///
+    /// Creates a new MLS group if it doesn't already exist in the provider's storage.
+    /// If group already exists in metadata, loads it instead.
+    ///
+    /// # Arguments
+    /// * `group_name` - Name of the group to create
+    /// * `user` - User identity (creator)
+    /// * `provider` - MLS provider for storage
+    ///
+    /// # Returns
+    /// * `Ok(Self)` - New or existing membership
+    ///
+    /// # Errors
+    /// * MLS group creation errors
+    /// * Storage errors
+    pub fn create_new_group(
+        group_name: &str,
+        user: &MlsUser,
+        provider: &MlsProvider,
+    ) -> Result<Self> {
+        log::info!("Creating or connecting to group: {}", group_name);
+
+        let group_id_key = format!("{}:{}", user.get_username(), group_name);
+
+        // Try to load existing group first
+        match provider.load_group_by_name(&group_id_key) {
+            Ok(Some(stored_group_id)) => {
+                // Group exists in metadata - try to load it
+                match crypto::load_group_from_storage(provider, &GroupId::from_slice(&stored_group_id)) {
+                    Ok(Some(mls_group)) => {
+                        log::info!(
+                            "Loaded existing MLS group: {} (id: {})",
+                            group_name,
+                            general_purpose::STANDARD.encode(&stored_group_id)
+                        );
+                        return Ok(Self {
+                            group_name: group_name.to_string(),
+                            group_id: stored_group_id,
+                            mls_group,
+                            _phantom: std::marker::PhantomData,
+                        });
+                    }
+                    Ok(None) => {
+                        // Group ID in metadata but not in storage - data inconsistency
+                        // Recreate the group as fallback
+                        log::warn!(
+                            "Group metadata exists but group not found in storage. Recreating group."
+                        );
+                    }
+                    Err(e) => {
+                        // Error loading group from storage - log but continue with creation
+                        log::warn!("Error loading group from storage: {}. Creating new group.", e);
+                    }
+                }
+            }
+            Ok(None) => {
+                // Group doesn't exist - will be created below
+                log::debug!("Group {} does not exist in metadata, creating new group.", group_name);
+            }
+            Err(e) => {
+                // Error checking storage - create new group as fallback
+                log::warn!("Error checking group mapping: {}. Creating new group.", e);
+            }
+        }
+
+        // Create new group
+        let mls_group = crypto::create_group_with_config(
+            user.get_credential_with_key(),
+            user.get_signature_key(),
+            provider,
+            group_name,
+        )?;
+
+        let group_id = mls_group.group_id().as_slice().to_vec();
+
+        // Save the group ID mapping for later retrieval
+        if let Err(e) = provider.save_group_name(&group_id_key, &group_id) {
+            log::warn!(
+                "Failed to save group name mapping for {}: {}. Group created but not persisted.",
+                group_name,
+                e
+            );
+        }
+
+        log::info!(
+            "Created new MLS group: {} (id: {})",
+            group_name,
+            general_purpose::STANDARD.encode(&group_id)
+        );
+
+        Ok(Self {
+            group_name: group_name.to_string(),
+            group_id,
+            mls_group,
+            _phantom: std::marker::PhantomData,
+        })
+    }
+
     /// Send a message to the group
     ///
     /// Encrypts the message using MLS and sends it via WebSocket.
