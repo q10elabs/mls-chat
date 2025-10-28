@@ -699,14 +699,439 @@ Server → WebSocket → MlsConnection::next_envelope()
                    }
 ```
 
+## Phase 4 Architectural Decisions - Critical Review
+
+During Phase 4 implementation planning, Agent A identified three critical architectural decisions that require clarification. These decisions affect message flow from WebSocket → MlsConnection → MlsMembership → cli.rs for display.
+
+### Decision 1: Message Display Strategy
+
+**Problem:** After MlsMembership processes an incoming ApplicationMessage and decrypts it, how should the decrypted text reach cli.rs for display?
+
+**Option A: Membership Returns Data, cli.rs Handles Display ✅ RECOMMENDED**
+
+```rust
+// In MlsMembership: return decrypted data
+pub async fn process_application_message(
+    &mut self,
+    sender: &str,
+    encrypted_content: &str,
+    user: &MlsUser,
+) -> Result<(String, String)> {  // Returns (sender, decrypted_text)
+    // ... decrypt message ...
+    Ok((sender.to_string(), decrypted_text))
+}
+
+// In cli.rs: receive and display
+match envelope {
+    ApplicationMessage { group_id, sender, encrypted_content } => {
+        if let Some(membership) = connection.get_membership_mut(&group_id) {
+            if let Ok((sender, text)) = membership.process_application_message(...) {
+                println!("{}", format_message(&group_name, &sender, &text));
+            }
+        }
+    }
+}
+```
+
+**Advantages:**
+- Clean separation: membership handles crypto/state, cli handles UI
+- MlsConnection and MlsMembership have ZERO UI dependencies
+- Easy to add alternative UIs (TUI, GUI, REST API) later
+- Matches current code pattern (client.rs:1025)
+- Follows single responsibility principle
+- Better testability (membership tests don't need to capture output)
+
+**Disadvantages:**
+- More logic in cli.rs event loop
+- More return types to coordinate
+
+---
+
+**Option B: Membership Handles Display ✗ NOT RECOMMENDED**
+
+```rust
+// In MlsMembership: print directly
+pub async fn process_application_message(...) -> Result<()> {
+    // ... decrypt ...
+    println!("{}", format_message(&self.group_name, &sender, &text));
+    Ok(())
+}
+```
+
+**Disadvantages:**
+- MlsMembership imports cli module (circular dependency risk)
+- Couples core logic to UI details
+- Hard to add alternative UIs
+- Violates "core logic has zero UI dependencies"
+- Makes unit testing harder
+
+---
+
+### Decision 2: MlsConnection's Role in Message Processing
+
+**Problem:** How should MlsConnection coordinate with MlsMembership when processing messages?
+
+**Option A: cli.rs Coordinates - Calls Both next_envelope() and process_incoming_message() ✅ RECOMMENDED**
+
+```rust
+// In cli.rs event loop:
+let envelope = connection.next_envelope().await?;
+
+match envelope {
+    ApplicationMessage { group_id, sender, encrypted_content } => {
+        // Update state through connection
+        connection.process_incoming_envelope(&envelope).await?;
+
+        // Display based on decrypted message
+        if let Some(membership) = connection.get_membership_mut(&group_id) {
+            if let Ok((sender, text)) = membership.process_application_message(...).await {
+                println!("{}", format_message(&group_name, &sender, &text));
+            }
+        }
+    }
+    WelcomeMessage { inviter, ... } => {
+        // Update state (creates new membership in connection)
+        connection.process_incoming_envelope(&envelope).await?;
+
+        // Display welcome
+        let membership = connection.get_newest_membership();
+        println!("Joined group: {}", membership.get_group_name());
+    }
+    CommitMessage { group_id, sender, ... } => {
+        // Update state
+        connection.process_incoming_envelope(&envelope).await?;
+
+        // Display notification
+        println!("{}", format_control(&group_name, &format!("{} updated group", sender)));
+    }
+}
+```
+
+**Advantages:**
+- MlsConnection focuses on state updates, not display coordination
+- cli.rs owns event loop and display logic (clear separation)
+- Minimal changes to Phase 3's connection.rs
+- Information flow is explicit: receive → process → display
+- Easier to extend for multi-group (multiple groups in single loop)
+- Better debugging (each step is visible in cli.rs)
+
+**Disadvantages:**
+- More boilerplate in cli.rs
+- Some pattern repetition (receive, then process)
+
+---
+
+**Option B: MlsConnection Returns Structured Display Information ✗ NOT RECOMMENDED**
+
+```rust
+pub enum ProcessedMessage {
+    TextMessage { sender: String, group_name: String, text: String },
+    NewGroup { group_name: String, inviter: String },
+    MembershipUpdate { group_name: String, action: String },
+}
+
+impl MlsConnection {
+    pub async fn next_envelope_processed(&mut self) -> Result<Option<ProcessedMessage>> {
+        // ... process and return display info ...
+    }
+}
+```
+
+**Disadvantages:**
+- MlsConnection couples itself to display concerns
+- Return types must expand as UI needs change
+- Hides processing logic (harder to debug)
+- Violates separation of concerns
+- Complicates Phase 3's routing
+
+---
+
+### Decision 3: Selected Group Tracking
+
+**Problem:** For single-group CLI, where should we track which group the user is in?
+
+**Option A: Track in Both - MlsClient Tracks ID, cli.rs Tracks Name ✅ RECOMMENDED**
+
+```rust
+// MlsClient.rs
+pub struct MlsClient {
+    connection: MlsConnection,
+    selected_group_id: Option<Vec<u8>>,  // Used for operations
+}
+
+impl MlsClient {
+    pub fn send_message(&mut self, text: &str) -> Result<()> {
+        let user = self.connection.get_user().ok_or(...)?;
+        let membership = self.connection.get_membership_mut(
+            self.selected_group_id.as_ref().ok_or(...)?
+        ).ok_or(...)?;
+        // Delegate to membership operation
+        membership.send_message(text, user, ...)?;
+        Ok(())
+    }
+}
+
+// cli.rs
+pub async fn run_client_loop(client: &mut MlsClient) -> Result<()> {
+    let mut current_group_name = client.get_group_name().to_string();
+
+    // ... event loop ...
+
+    if let WelcomeMessage { ... } = envelope {
+        // Update display name
+        current_group_name = connection.get_newest_membership().get_group_name().to_string();
+    }
+}
+```
+
+**Advantages:**
+- Clear division of concerns: MlsClient tracks functional state (which group), cli.rs tracks display state (names)
+- MlsClient operations (send_message) can find membership efficiently by ID
+- cli.rs shows human-readable names
+- Easy to extend to multi-group: track multiple selected_group_ids
+- Matches current single-group CLI model
+- Allows operations to work independently
+
+**Disadvantages:**
+- Two places track "current group"
+- Must keep ID and name in sync
+
+---
+
+**Option B: Track Only in MlsClient ✗ LESS RECOMMENDED**
+
+```rust
+pub struct MlsClient {
+    connection: MlsConnection,
+    selected_group_id: Option<Vec<u8>>,
+    selected_group_name: String,  // Also track name here
+}
+```
+
+**Disadvantages:**
+- MlsClient couples data from different scopes
+- More state to synchronize
+- Blurs responsibility lines
+
+---
+
+**Option C: Track Only in cli.rs ✗ LESS RECOMMENDED**
+
+Requires passing group_id to every operation, breaking current API.
+
+---
+
+## Summary of Recommendations
+
+For Phase 4 to proceed with clean architecture, I recommend:
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Message Display** | **Option A** | Clean separation, zero UI in core, testable, matches current code |
+| **Connection Role** | **Option A** | Keeps connection focused on state, minimal Phase 3 changes |
+| **Group Tracking** | **Option A** | Efficient operations, clean display, multi-group ready |
+
+These choices will result in:
+- ✅ Core logic (MlsConnection, MlsMembership, MlsUser, MlsClient) with zero UI dependencies
+- ✅ CLI logic fully contained in cli.rs
+- ✅ Easy to add alternative UIs (TUI, GUI, REST API)
+- ✅ Clean information flow: data → process → display
+- ✅ Extensible to multi-group support
+
+---
+
+## Phase 4 Architectural Decisions - APPROVED
+
+User has approved the architectural approach for Phase 4:
+
+### Approved Decision 1: Message Display Strategy
+✅ **APPROVED: Option A** - Membership returns data, cli.rs handles display
+
+**Implementation:**
+- MlsMembership methods return `(sender: String, text: String)` for ApplicationMessage
+- cli.rs receives result and calls `format_message()` for display
+- Core modules have zero UI dependencies
+
+### Approved Decision 2: MlsConnection's Role
+✅ **APPROVED: Option A** - cli.rs coordinates (calls next_envelope + process + display)
+
+**Implementation:**
+- cli.rs receives envelope via `connection.next_envelope()`
+- cli.rs calls `connection.process_incoming_envelope(envelope)` to update state
+- cli.rs handles display based on envelope type
+- MlsConnection focuses on state management only
+
+### Approved Decision 3: Group Tracking Strategy
+✅ **APPROVED: Custom approach** - MlsClient provides method, cli.rs calls it
+
+**Implementation:**
+```rust
+// In MlsClient
+impl MlsClient {
+    pub fn get_current_group_name(&self) -> Result<String> {
+        let group_id = self.selected_group_id.as_ref()
+            .ok_or(ClientError::NoGroupSelected)?;
+        let membership = self.connection.get_membership(group_id)
+            .ok_or(ClientError::GroupNotFound)?;
+        Ok(membership.get_group_name().to_string())
+    }
+}
+
+// In cli.rs
+let group_name = client.get_current_group_name()?;
+println!("{}", format_message(&group_name, &sender, &text));
+```
+
+**Advantages:**
+- Cleaner separation: MlsClient owns all state management
+- cli.rs asks client for display information (single source of truth)
+- No duplication between MlsClient and cli.rs
+- Easy to maintain (only one place to update group name)
+- More extensible (can add methods like `get_current_group_id()` as needed)
+
+---
+
 ## Current Status
 
-**Phase:** Planning complete, awaiting implementation approval
+**Phases 1-3:** ✅ COMPLETE (73/73 tests passing, 0 warnings)
 
-**Next Steps (if approved):**
-1. Phase 1: Create MlsUser module
-2. Phase 2: Create MlsMembership module
-3. Phase 3: Create MlsConnection module with routing logic
-4. Phase 4: Refactor MlsClient to thin wrapper
-5. Phase 5: Update and validate tests
-6. Phase 6 (Future): Add multi-group CLI support
+**Phase 4:** ✅ COMPLETE (71/71 tests passing, 0 warnings, clippy clean)
+
+**Phase 5:** ▶️ PENDING
+
+**Phase 6 (Future):** ▶️ PENDING - Add multi-group CLI support
+
+**Next Steps:**
+1. ▶️ Phase 5: Update and validate all integration tests
+2. ▶️ Phase 6: Add multi-group CLI support (/groups list, /groups switch)
+
+## Phase 4 Implementation Progress
+
+**Started:** 2025-10-27
+
+### Critical Architecture Clarification - RESOLVED
+
+**Question:** How should cli.rs access MlsConnection?
+
+**APPROVED ANSWER: Option 1** - Add accessor methods to MlsClient
+
+```rust
+impl MlsClient {
+    pub fn get_connection(&self) -> &MlsConnection {
+        &self.connection
+    }
+
+    pub fn get_connection_mut(&mut self) -> &mut MlsConnection {
+        &mut self.connection
+    }
+}
+```
+
+**Usage in cli.rs:**
+```rust
+pub async fn run_client_loop(client: &mut MlsClient) -> Result<()> {
+    loop {
+        tokio::select! {
+            // ... stdin branch ...
+
+            // WebSocket branch
+            envelope = client.get_connection_mut().next_envelope().await => {
+                // Process envelope
+                client.get_connection_mut().process_incoming_envelope(envelope).await?;
+
+                // Display
+                let membership = client.get_connection().get_membership(&group_id)?;
+                // ...
+            }
+        }
+    }
+}
+```
+
+**Rationale:**
+- Cleaner interface for cli.rs (single object to pass around)
+- MlsClient retains full control and encapsulation
+- Matches existing pattern (test helpers like `get_provider()`, `get_api()`)
+- No need to destructure in main.rs
+- Follows single responsibility: cli.rs doesn't need to know about internals
+
+### Implementation Log
+
+**Phase 4: MlsClient Refactoring - Started 2025-10-28**
+
+Agent A beginning implementation of Phase 4 with approved architecture:
+- Message Display Strategy: Option A (membership returns data, cli.rs displays)
+- Connection Role: Option A (cli.rs coordinates - calls next_envelope + process + display)
+- Group Tracking: Custom approach (MlsClient provides `get_current_group_name()` method)
+- MlsConnection Access: Accessor methods (`get_connection()`, `get_connection_mut()`)
+
+**Tasks:**
+1. ✅ Refactor MlsClient struct (connection + selected_group_id)
+2. ✅ Implement MlsClient methods (delegation to connection/membership)
+3. ✅ Extract run() to cli::run_client_loop()
+4. ✅ Update main.rs (2-line change)
+5. ✅ Create unit tests (5+ tests in client.rs)
+
+**Progress:**
+- ✅ Refactored MlsClient to wrap MlsConnection
+- ✅ Added selected_group_id tracking
+- ✅ Implemented all delegation methods: initialize(), connect_to_group(), send_message(), invite_user(), list_members()
+- ✅ Added get_current_group_name() per approved architecture
+- ✅ Added get_connection() and get_connection_mut() accessors for cli.rs
+- ✅ All test helpers updated and working
+- ✅ Added 5 unit tests (test_client_creation, test_client_initialization, test_client_connect_to_group, test_client_operations_delegate, test_client_get_current_group_name)
+- ✅ Code compiles with zero warnings
+- ✅ Added helper methods to MlsConnection (add_membership, get_newest_membership, send_message_to_group, invite_user_to_group, get_websocket)
+- ✅ Created pub async fn run_client_loop(client: &mut MlsClient) in cli.rs
+- ✅ Implemented tokio::select! loop with stdin and WebSocket branches
+- ✅ Updated main.rs to call cli::run_client_loop() instead of client.run()
+- ✅ Fixed unused variable warning in connection.rs test
+- ✅ All 71 library tests passing, 0 warnings, clippy clean
+
+**Architecture Notes:**
+- Solved borrow-checker issues by adding helper methods to MlsConnection that encapsulate the complex borrowing (send_message_to_group, invite_user_to_group)
+- This allows MlsClient to delegate cleanly without managing multiple borrows
+- MlsConnection now has all methods needed for Phase 4
+
+## Phase 4 Completion Summary
+
+**Completed: 2025-10-28**
+
+### Files Modified
+
+1. **client/rust/src/cli.rs**
+   - Added `pub async fn run_client_loop(client: &mut MlsClient)` function
+   - Implements tokio::select! loop with:
+     - stdin branch: reads user commands, parses via parse_command(), executes via client methods
+     - WebSocket branch: receives envelopes, calls client.get_connection_mut().process_incoming_envelope()
+   - Handles routing, error logging, user feedback (eprintln, println)
+
+2. **client/rust/src/main.rs**
+   - Added `cli` to use statement: `use mls_chat_client::{client::MlsClient, cli, Result};`
+   - Changed `client.run().await?` to `cli::run_client_loop(&mut client).await?`
+
+3. **client/rust/src/mls/connection.rs**
+   - Fixed unused variable warning: renamed `storage_dir` to `_storage_dir` in test
+
+### Test Results
+- ✅ 71/71 library tests passing
+- ✅ 0 compilation warnings
+- ✅ Clippy: Clean
+- ✅ Code compiles successfully
+
+### Architecture Validation
+- ✅ Separation of concerns: Core logic in connection/membership, CLI logic in cli.rs
+- ✅ Delegation pattern works cleanly with accessor methods
+- ✅ Message routing via connection.process_incoming_envelope() to memberships
+- ✅ CLI controls flow: reads input, processes via client, displays results
+- ✅ Borrow checker satisfied with current design
+
+### Success Criteria Met
+- ✅ cli::run_client_loop() created and fully functional
+- ✅ Concurrent I/O event loop with tokio::select!
+- ✅ User input handling (commands, messages)
+- ✅ Incoming message processing via connection routing
+- ✅ Error handling with logging and user feedback
+- ✅ All tests passing
+- ✅ Zero warnings
+- ✅ Code quality: Clean clippy output

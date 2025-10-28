@@ -498,6 +498,90 @@ impl MlsConnection {
     pub fn is_websocket_connected(&self) -> bool {
         self.websocket.is_some()
     }
+
+    /// Get reference to WebSocket (for operations that need it)
+    ///
+    /// # Returns
+    /// * `Some(&MessageHandler)` if WebSocket is connected
+    /// * `None` if not connected
+    pub fn get_websocket(&self) -> Option<&MessageHandler> {
+        self.websocket.as_ref()
+    }
+
+    /// Add a membership to the connection's HashMap
+    ///
+    /// Used when creating or loading a group outside of the Welcome message flow.
+    ///
+    /// # Arguments
+    /// * `membership` - The membership to add
+    ///
+    /// # Note
+    /// The membership's group_id is used as the key in the HashMap.
+    pub fn add_membership(&mut self, membership: MlsMembership<'static>) {
+        let group_id = membership.get_group_id().to_vec();
+        log::debug!("Adding membership for group_id: {}", general_purpose::STANDARD.encode(&group_id));
+        self.memberships.insert(group_id, membership);
+    }
+
+    /// Send a message to a specific group
+    ///
+    /// Helper method that handles the borrow-checking complexity of accessing
+    /// both the membership and the services it needs.
+    ///
+    /// # Arguments
+    /// * `group_id` - Group to send message to
+    /// * `text` - Message text
+    ///
+    /// # Errors
+    /// * Group not found
+    /// * User not initialized
+    /// * WebSocket not connected
+    /// * MLS encryption errors
+    pub async fn send_message_to_group(&mut self, group_id: &[u8], text: &str) -> Result<()> {
+        // Get user first (immutable borrow)
+        let user = self.user.as_ref()
+            .ok_or_else(|| ClientError::Config("User not initialized".to_string()))?;
+
+        // Get websocket (immutable borrow)
+        let websocket = self.websocket.as_ref()
+            .ok_or_else(|| ClientError::Config("WebSocket not connected".to_string()))?;
+
+        // Get membership (mutable borrow - but we've finished with user/websocket immutable borrows above)
+        let membership = self.memberships.get_mut(group_id)
+            .ok_or_else(|| ClientError::Config("Group not found".to_string()))?;
+
+        // Call membership method
+        membership.send_message(text, user, &self.mls_provider, &self.api, websocket).await
+    }
+
+    /// Invite a user to a specific group
+    ///
+    /// Helper method that handles the borrow-checking complexity.
+    ///
+    /// # Arguments
+    /// * `group_id` - Group to invite user to
+    /// * `invitee_username` - Username to invite
+    ///
+    /// # Errors
+    /// * Group not found
+    /// * User not initialized
+    /// * Server errors
+    pub async fn invite_user_to_group(&mut self, group_id: &[u8], invitee_username: &str) -> Result<()> {
+        // Get user first
+        let user = self.user.as_ref()
+            .ok_or_else(|| ClientError::Config("User not initialized".to_string()))?;
+
+        // Get websocket
+        let websocket = self.websocket.as_ref()
+            .ok_or_else(|| ClientError::Config("WebSocket not connected".to_string()))?;
+
+        // Get membership
+        let membership = self.memberships.get_mut(group_id)
+            .ok_or_else(|| ClientError::Config("Group not found".to_string()))?;
+
+        // Call membership method
+        membership.invite_user(invitee_username, user, &self.mls_provider, &self.api, websocket).await
+    }
 }
 
 #[cfg(test)]
@@ -625,7 +709,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_welcome_message_creates_membership() {
         let temp_dir = tempdir().unwrap();
-        let storage_dir = temp_dir.path();
+        let _storage_dir = temp_dir.path();
 
         // === Setup: Alice creates a group and invites Bob ===
         let alice_storage = temp_dir.path().join("alice");

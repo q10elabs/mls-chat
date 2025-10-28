@@ -4,7 +4,7 @@
 
 use clap::Parser;
 use log::info;
-use mls_chat_client::{client::MlsClient, Result};
+use mls_chat_client::{client::MlsClient, cli, Result};
 
 #[derive(Parser)]
 #[command(name = "mls-client")]
@@ -77,8 +77,8 @@ async fn main() -> Result<()> {
     // Connect to group (create or load existing)
     client.connect_to_group().await?;
 
-    // Run the client
-    client.run().await?;
+    // Run the client control loop
+    cli::run_client_loop(&mut client).await?;
 
     Ok(())
 }
