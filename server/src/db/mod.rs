@@ -2,6 +2,7 @@
 /// Handles all database operations for users, groups, messages, and backups.
 
 pub mod init;
+pub mod keypackage_store;
 pub mod models;
 
 use chrono::Utc;

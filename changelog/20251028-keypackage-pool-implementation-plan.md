@@ -902,14 +902,21 @@ Phase 2.7 (Testing & Docs):
 
 ## Obstacles & Solutions
 
-(To be updated as implementation progresses)
+### Phase 2.0 Implementation (2025-10-28)
 
-- **Obstacle:** (to be added as encountered)
-- **Solution:** (to be added as resolved)
+**Started:** 2025-10-28
+**Status:** In Progress
+
+**Implementation Notes:**
+- Reviewed existing server patterns in `server/src/db/mod.rs`, `models.rs`, `init.rs`
+- Server uses `rusqlite` with async via `DbPool = Arc<Mutex<Connection>>`
+- Timestamps stored as TEXT in RFC3339 format (e.g., using `chrono::Utc::now().to_rfc3339()`)
+- Standard pattern: DbPool-based methods, optional() for Option results, tests use in-memory DB
+- Creating KeyPackageStore as separate module following existing architecture
 
 ---
 
 **Created:** 2025-10-28
-**Last Updated:** 2025-10-28 (updated with codebase review)
-**Status:** Planning - awaiting approval
+**Last Updated:** 2025-10-28 (Phase 2.0 implementation started)
+**Status:** Implementation - Phase 2.0
 **Phase:** 2 (Production-ready pool implementation)

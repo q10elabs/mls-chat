@@ -37,6 +37,7 @@ mod tests {
         let config = Config {
             port: 4000,
             database: PathBuf::from("chatserver.db"),
+            pidfile: None,
         };
         assert_eq!(config.port, 4000);
         assert_eq!(config.database.to_str().unwrap(), "chatserver.db");
@@ -47,6 +48,7 @@ mod tests {
         let config = Config {
             port: 8080,
             database: PathBuf::from("chatserver.db"),
+            pidfile: None,
         };
         assert_eq!(config.port, 8080);
     }
@@ -56,6 +58,7 @@ mod tests {
         let config = Config {
             port: 4000,
             database: PathBuf::from("/tmp/custom.db"),
+            pidfile: None,
         };
         assert_eq!(config.database.to_str().unwrap(), "/tmp/custom.db");
     }
