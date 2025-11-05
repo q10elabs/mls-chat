@@ -37,10 +37,10 @@
 
 use crate::api::ServerApi;
 use crate::crypto;
-use crate::error::{Result, ClientError};
-use crate::message_processing::{process_application_message, format_display_message};
-use crate::models::MlsMessageEnvelope;
+use crate::error::{ClientError, Result};
+use crate::message_processing::{format_display_message, process_application_message};
 use crate::mls::user::MlsUser;
+use crate::models::MlsMessageEnvelope;
 use crate::provider::MlsProvider;
 use crate::storage::LocalStore;
 use crate::websocket::MessageHandler;
@@ -131,34 +131,54 @@ impl<'a> MlsMembership<'a> {
         provider: &MlsProvider,
         _metadata_store: &LocalStore,
     ) -> Result<Self> {
-        log::info!("Processing Welcome message from {} to join a group", inviter);
+        log::info!(
+            "Processing Welcome message from {} to join a group",
+            inviter
+        );
 
         // === Step 1: Decode and deserialize Welcome message ===
         let welcome_bytes = general_purpose::STANDARD
             .decode(welcome_blob_b64)
             .map_err(|e| {
                 log::error!("Failed to decode Welcome message from {}: {}", inviter, e);
-                ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to decode welcome: {}", e)))
+                ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                    "Failed to decode welcome: {}",
+                    e
+                )))
             })?;
 
-        let welcome_message_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut welcome_bytes.as_slice())
-            .map_err(|e| {
-                log::error!("Failed to deserialize Welcome message from {}: {}", inviter, e);
-                ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to deserialize welcome: {}", e)))
-            })?;
+        let welcome_message_in =
+            openmls::prelude::MlsMessageIn::tls_deserialize(&mut welcome_bytes.as_slice())
+                .map_err(|e| {
+                    log::error!(
+                        "Failed to deserialize Welcome message from {}: {}",
+                        inviter,
+                        e
+                    );
+                    ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                        "Failed to deserialize welcome: {}",
+                        e
+                    )))
+                })?;
 
         // === Step 2: Decode and deserialize ratchet tree ===
         let ratchet_tree_bytes = general_purpose::STANDARD
             .decode(ratchet_tree_blob_b64)
             .map_err(|e| {
                 log::error!("Failed to decode ratchet tree from {}: {}", inviter, e);
-                ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to decode ratchet tree: {}", e)))
+                ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                    "Failed to decode ratchet tree: {}",
+                    e
+                )))
             })?;
 
-        let ratchet_tree: openmls::prelude::RatchetTreeIn = serde_json::from_slice(&ratchet_tree_bytes)
-            .map_err(|e| {
+        let ratchet_tree: openmls::prelude::RatchetTreeIn =
+            serde_json::from_slice(&ratchet_tree_bytes).map_err(|e| {
                 log::error!("Failed to deserialize ratchet tree from {}: {}", inviter, e);
-                ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to deserialize ratchet tree: {}", e)))
+                ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                    "Failed to deserialize ratchet tree: {}",
+                    e
+                )))
             })?;
 
         // === Step 3: Process the Welcome message to create the group ===
@@ -175,24 +195,31 @@ impl<'a> MlsMembership<'a> {
         })?;
 
         // === Step 4: Extract group name from encrypted metadata ===
-        let metadata = crypto::extract_group_metadata(&joined_group)?
-            .ok_or_else(|| {
-                log::error!("Welcome message missing group metadata - cannot determine group name");
-                ClientError::Config("Missing group metadata in Welcome - inviter may be using incompatible client".to_string())
-            })?;
+        let metadata = crypto::extract_group_metadata(&joined_group)?.ok_or_else(|| {
+            log::error!("Welcome message missing group metadata - cannot determine group name");
+            ClientError::Config(
+                "Missing group metadata in Welcome - inviter may be using incompatible client"
+                    .to_string(),
+            )
+        })?;
 
         let group_name = metadata.name.clone();
         let group_id = joined_group.group_id().as_slice().to_vec();
 
         // === Step 5: Store the group ID mapping for persistence ===
         let group_id_key = format!("{}:{}", user.get_username(), &group_name);
-        provider.save_group_name(&group_id_key, &group_id)
+        provider
+            .save_group_name(&group_id_key, &group_id)
             .map_err(|e| {
                 log::error!("Failed to store group ID mapping for {}: {}", group_name, e);
                 e
             })?;
 
-        log::info!("Successfully joined group '{}' via Welcome message from {}", group_name, inviter);
+        log::info!(
+            "Successfully joined group '{}' via Welcome message from {}",
+            group_name,
+            inviter
+        );
 
         // === Step 6: Return new MlsMembership instance ===
         Ok(Self {
@@ -240,19 +267,17 @@ impl<'a> MlsMembership<'a> {
 
         // Look up group ID by name
         let group_id_key = format!("{}:{}", user.get_username(), group_name);
-        let stored_group_id = provider.load_group_by_name(&group_id_key)?
-            .ok_or_else(|| {
-                log::error!("Group {} not found in metadata store", group_name);
-                ClientError::Config(format!("Group {} not found", group_name))
-            })?;
+        let stored_group_id = provider.load_group_by_name(&group_id_key)?.ok_or_else(|| {
+            log::error!("Group {} not found in metadata store", group_name);
+            ClientError::Config(format!("Group {} not found", group_name))
+        })?;
 
         // Load the group from storage
         let group_id = GroupId::from_slice(&stored_group_id);
-        let mls_group = crypto::load_group_from_storage(provider, &group_id)?
-            .ok_or_else(|| {
-                log::error!("Group {} not found in provider storage", group_name);
-                ClientError::Config(format!("Group {} not found in storage", group_name))
-            })?;
+        let mls_group = crypto::load_group_from_storage(provider, &group_id)?.ok_or_else(|| {
+            log::error!("Group {} not found in provider storage", group_name);
+            ClientError::Config(format!("Group {} not found in storage", group_name))
+        })?;
 
         log::info!(
             "Loaded existing MLS group: {} (id: {})",
@@ -297,7 +322,10 @@ impl<'a> MlsMembership<'a> {
         match provider.load_group_by_name(&group_id_key) {
             Ok(Some(stored_group_id)) => {
                 // Group exists in metadata - try to load it
-                match crypto::load_group_from_storage(provider, &GroupId::from_slice(&stored_group_id)) {
+                match crypto::load_group_from_storage(
+                    provider,
+                    &GroupId::from_slice(&stored_group_id),
+                ) {
                     Ok(Some(mls_group)) => {
                         log::info!(
                             "Loaded existing MLS group: {} (id: {})",
@@ -320,13 +348,19 @@ impl<'a> MlsMembership<'a> {
                     }
                     Err(e) => {
                         // Error loading group from storage - log but continue with creation
-                        log::warn!("Error loading group from storage: {}. Creating new group.", e);
+                        log::warn!(
+                            "Error loading group from storage: {}. Creating new group.",
+                            e
+                        );
                     }
                 }
             }
             Ok(None) => {
                 // Group doesn't exist - will be created below
-                log::debug!("Group {} does not exist in metadata, creating new group.", group_name);
+                log::debug!(
+                    "Group {} does not exist in metadata, creating new group.",
+                    group_name
+                );
             }
             Err(e) => {
                 // Error checking storage - create new group as fallback
@@ -401,9 +435,11 @@ impl<'a> MlsMembership<'a> {
 
         // Serialize the encrypted MLS message using TLS codec
         use tls_codec::Serialize;
-        let encrypted_bytes = encrypted_msg
-            .tls_serialize_detached()
-            .map_err(|_e| ClientError::Mls(crate::error::MlsError::OpenMls("Failed to serialize message".to_string())))?;
+        let encrypted_bytes = encrypted_msg.tls_serialize_detached().map_err(|_e| {
+            ClientError::Mls(crate::error::MlsError::OpenMls(
+                "Failed to serialize message".to_string(),
+            ))
+        })?;
 
         // Encode for WebSocket transmission
         let encrypted_b64 = general_purpose::STANDARD.encode(&encrypted_bytes);
@@ -463,13 +499,25 @@ impl<'a> MlsMembership<'a> {
         };
 
         // Deserialize and validate the invitee's KeyPackage
-        let invitee_key_package_in = openmls::key_packages::KeyPackageIn::tls_deserialize(&mut &invitee_key_package_bytes[..])
-            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(format!("Failed to deserialize invitee key package: {}", e))))?;
+        let invitee_key_package_in = openmls::key_packages::KeyPackageIn::tls_deserialize(
+            &mut &invitee_key_package_bytes[..],
+        )
+        .map_err(|e| {
+            ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                "Failed to deserialize invitee key package: {}",
+                e
+            )))
+        })?;
 
         // Validate KeyPackage
         let invitee_key_package = invitee_key_package_in
             .validate(provider.crypto(), openmls::prelude::ProtocolVersion::Mls10)
-            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(format!("Invalid invitee key package: {}", e))))?;
+            .map_err(|e| {
+                ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                    "Invalid invitee key package: {}",
+                    e
+                )))
+            })?;
 
         // Add the member to the persistent group
         let (commit_message, welcome_message, _group_info) = crypto::add_members(
@@ -486,17 +534,20 @@ impl<'a> MlsMembership<'a> {
         let ratchet_tree = crypto::export_ratchet_tree(&self.mls_group);
 
         // Send Welcome message directly to the invitee
-        let welcome_bytes = welcome_message
-            .tls_serialize_detached()
-            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(
-                format!("Failed to serialize welcome: {}", e)
-            )))?;
+        let welcome_bytes = welcome_message.tls_serialize_detached().map_err(|e| {
+            ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                "Failed to serialize welcome: {}",
+                e
+            )))
+        })?;
         let welcome_b64 = general_purpose::STANDARD.encode(&welcome_bytes);
 
-        let ratchet_tree_bytes = serde_json::to_vec(&ratchet_tree)
-            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(
-                format!("Failed to serialize ratchet tree: {}", e)
-            )))?;
+        let ratchet_tree_bytes = serde_json::to_vec(&ratchet_tree).map_err(|e| {
+            ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                "Failed to serialize ratchet tree: {}",
+                e
+            )))
+        })?;
         let ratchet_tree_b64 = general_purpose::STANDARD.encode(&ratchet_tree_bytes);
 
         // Create and send Welcome envelope (no group_id - direct to invitee)
@@ -508,16 +559,20 @@ impl<'a> MlsMembership<'a> {
         };
 
         websocket.send_envelope(&welcome_envelope).await?;
-        log::info!("Sent Welcome message to {} (ratchet tree included)", invitee_username);
+        log::info!(
+            "Sent Welcome message to {} (ratchet tree included)",
+            invitee_username
+        );
 
         // Broadcast Commit to all existing members
         let mls_group_id_b64 = general_purpose::STANDARD.encode(&self.group_id);
 
-        let commit_bytes = commit_message
-            .tls_serialize_detached()
-            .map_err(|e| ClientError::Mls(crate::error::MlsError::OpenMls(
-                format!("Failed to serialize commit: {}", e)
-            )))?;
+        let commit_bytes = commit_message.tls_serialize_detached().map_err(|e| {
+            ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                "Failed to serialize commit: {}",
+                e
+            )))
+        })?;
         let commit_b64 = general_purpose::STANDARD.encode(&commit_bytes);
 
         let commit_envelope = MlsMessageEnvelope::CommitMessage {
@@ -545,7 +600,9 @@ impl<'a> MlsMembership<'a> {
                 // Extract username from BasicCredential identity
                 match member.credential.credential_type() {
                     openmls::prelude::CredentialType::Basic => {
-                        if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
+                        if let Ok(basic_cred) =
+                            openmls::prelude::BasicCredential::try_from(member.credential.clone())
+                        {
                             String::from_utf8(basic_cred.identity().to_vec()).ok()
                         } else {
                             None
@@ -597,16 +654,28 @@ impl<'a> MlsMembership<'a> {
                     &encrypted_content,
                     &mut self.mls_group,
                     provider,
-                ).await {
+                )
+                .await
+                {
                     Ok(Some(decrypted_text)) => {
-                        println!("{}", format_display_message(&self.group_name, &sender, &decrypted_text));
+                        println!(
+                            "{}",
+                            format_display_message(&self.group_name, &sender, &decrypted_text)
+                        );
                     }
                     Ok(None) => {
                         log::debug!("Received non-application message in envelope");
                     }
                     Err(e) => {
                         log::error!("Failed to process message: {}", e);
-                        println!("{}", format_display_message(&self.group_name, &sender, "[decryption failed]"));
+                        println!(
+                            "{}",
+                            format_display_message(
+                                &self.group_name,
+                                &sender,
+                                "[decryption failed]"
+                            )
+                        );
                     }
                 }
             }
@@ -615,7 +684,11 @@ impl<'a> MlsMembership<'a> {
                 sender,
                 commit_blob,
             } => {
-                log::info!("Received Commit from {} for group {}", sender, self.group_name);
+                log::info!(
+                    "Received Commit from {} for group {}",
+                    sender,
+                    self.group_name
+                );
 
                 // Skip processing our own Commit messages
                 if sender == user.get_username() {
@@ -626,7 +699,9 @@ impl<'a> MlsMembership<'a> {
                 // Decode and process the commit
                 match general_purpose::STANDARD.decode(&commit_blob) {
                     Ok(commit_bytes) => {
-                        match openmls::prelude::MlsMessageIn::tls_deserialize(&mut commit_bytes.as_slice()) {
+                        match openmls::prelude::MlsMessageIn::tls_deserialize(
+                            &mut commit_bytes.as_slice(),
+                        ) {
                             Ok(commit_message_in) => {
                                 match crypto::process_message(&mut self.mls_group, provider, &commit_message_in) {
                                     Ok(processed_commit) => {
@@ -710,7 +785,9 @@ mod tests {
 
         // Alice creates a group (generate credentials separately to avoid move issues)
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+        let mut alice_group =
+            crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup")
+                .unwrap();
 
         // Create alice_user after using alice_key for group (to avoid move)
         // Note: alice_user is only needed for MlsUser API validation, not used in this test
@@ -720,12 +797,8 @@ mod tests {
             keypair_blob: alice_key2.to_public_vec(),
             credential_blob: vec![],
         };
-        let _alice_user = MlsUser::new(
-            "alice".to_string(),
-            alice_identity,
-            alice_key2,
-            alice_cred2,
-        );
+        let _alice_user =
+            MlsUser::new("alice".to_string(), alice_identity, alice_key2, alice_cred2);
 
         // Alice invites Bob
         let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
@@ -734,20 +807,18 @@ mod tests {
             keypair_blob: bob_key.to_public_vec(),
             credential_blob: vec![],
         };
-        let bob_user = MlsUser::new(
-            "bob".to_string(),
-            bob_identity,
-            bob_key,
-            bob_cred.clone(),
-        );
+        let bob_user = MlsUser::new("bob".to_string(), bob_identity, bob_key, bob_cred.clone());
 
-        let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, bob_user.get_signature_key(), &provider).unwrap();
+        let bob_key_package =
+            crypto::generate_key_package_bundle(&bob_cred, bob_user.get_signature_key(), &provider)
+                .unwrap();
         let (_commit, welcome, _) = crypto::add_members(
             &mut alice_group,
             &provider,
             &alice_key,
             &[bob_key_package.key_package()],
-        ).unwrap();
+        )
+        .unwrap();
         crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
 
         // Export ratchet tree
@@ -768,7 +839,8 @@ mod tests {
             &bob_user,
             &provider,
             &metadata_store,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Verify membership state
         assert_eq!(bob_membership.get_group_name(), "testgroup");
@@ -790,7 +862,9 @@ mod tests {
 
         // Alice creates a group
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+        let alice_group =
+            crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup")
+                .unwrap();
 
         // Create alice_user with separate credentials (after group creation)
         let (alice_cred2, alice_key2) = crypto::generate_credential_with_key("alice").unwrap();
@@ -799,12 +873,7 @@ mod tests {
             keypair_blob: alice_key2.to_public_vec(),
             credential_blob: vec![],
         };
-        let alice_user = MlsUser::new(
-            "alice".to_string(),
-            alice_identity,
-            alice_key2,
-            alice_cred2,
-        );
+        let alice_user = MlsUser::new("alice".to_string(), alice_identity, alice_key2, alice_cred2);
         let group_id = alice_group.group_id().as_slice().to_vec();
 
         // Store group ID mapping
@@ -812,11 +881,8 @@ mod tests {
         provider.save_group_name(&group_id_key, &group_id).unwrap();
 
         // Connect to existing group
-        let membership = MlsMembership::connect_to_existing_group(
-            "testgroup",
-            &alice_user,
-            &provider,
-        ).unwrap();
+        let membership =
+            MlsMembership::connect_to_existing_group("testgroup", &alice_user, &provider).unwrap();
 
         // Verify loaded state
         assert_eq!(membership.get_group_name(), "testgroup");
@@ -838,7 +904,9 @@ mod tests {
 
         // Create group with multiple members
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+        let mut alice_group =
+            crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup")
+                .unwrap();
 
         // Create alice_user with separate credentials
         let (alice_cred2, alice_key2) = crypto::generate_credential_with_key("alice").unwrap();
@@ -847,22 +915,19 @@ mod tests {
             keypair_blob: alice_key2.to_public_vec(),
             credential_blob: vec![],
         };
-        let alice_user = MlsUser::new(
-            "alice".to_string(),
-            alice_identity,
-            alice_key2,
-            alice_cred2,
-        );
+        let alice_user = MlsUser::new("alice".to_string(), alice_identity, alice_key2, alice_cred2);
 
         // Add Bob
         let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
-        let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
+        let bob_key_package =
+            crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
         let (_commit, _welcome, _) = crypto::add_members(
             &mut alice_group,
             &provider,
             &alice_key,
             &[bob_key_package.key_package()],
-        ).unwrap();
+        )
+        .unwrap();
         crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
 
         // Create membership
@@ -870,11 +935,8 @@ mod tests {
         let group_id_key = format!("{}:{}", "alice", "testgroup");
         provider.save_group_name(&group_id_key, &group_id).unwrap();
 
-        let membership = MlsMembership::connect_to_existing_group(
-            "testgroup",
-            &alice_user,
-            &provider,
-        ).unwrap();
+        let membership =
+            MlsMembership::connect_to_existing_group("testgroup", &alice_user, &provider).unwrap();
 
         // Verify members
         let members = membership.list_members();
@@ -897,38 +959,40 @@ mod tests {
 
         // Setup two-party group (Alice and Bob)
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+        let mut alice_group =
+            crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup")
+                .unwrap();
 
         // Add Bob
         let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
-        let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
+        let bob_key_package =
+            crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
 
         let bob_identity = crate::models::Identity {
             username: "bob".to_string(),
             keypair_blob: bob_key.to_public_vec(),
             credential_blob: vec![],
         };
-        let bob_user = MlsUser::new(
-            "bob".to_string(),
-            bob_identity,
-            bob_key,
-            bob_cred,
-        );
+        let bob_user = MlsUser::new("bob".to_string(), bob_identity, bob_key, bob_cred);
 
         let (_commit, welcome, _) = crypto::add_members(
             &mut alice_group,
             &provider,
             &alice_key,
             &[bob_key_package.key_package()],
-        ).unwrap();
+        )
+        .unwrap();
         crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
 
         // Bob joins
         let join_config = openmls::prelude::MlsGroupJoinConfig::default();
         let ratchet_tree = Some(crypto::export_ratchet_tree(&alice_group));
         let serialized = welcome.tls_serialize_detached().unwrap();
-        let welcome_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
-        let bob_group = crypto::process_welcome_message(&provider, &join_config, &welcome_in, ratchet_tree).unwrap();
+        let welcome_in =
+            openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+        let bob_group =
+            crypto::process_welcome_message(&provider, &join_config, &welcome_in, ratchet_tree)
+                .unwrap();
 
         // Alice sends a message
         let message_text = "Hello Bob!";
@@ -937,7 +1001,8 @@ mod tests {
             &provider,
             &alice_key,
             message_text.as_bytes(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Serialize and encode for envelope
         let encrypted_bytes = encrypted.tls_serialize_detached().unwrap();
@@ -960,7 +1025,9 @@ mod tests {
         };
 
         // Process message (should succeed and display)
-        let result = bob_membership.process_incoming_message(envelope, &bob_user, &provider).await;
+        let result = bob_membership
+            .process_incoming_message(envelope, &bob_user, &provider)
+            .await;
         assert!(result.is_ok());
     }
 
@@ -978,38 +1045,40 @@ mod tests {
 
         // Setup: Alice creates group, adds Bob, then Bob will receive commit when Alice adds Carol
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+        let mut alice_group =
+            crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup")
+                .unwrap();
 
         // Add Bob
         let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
-        let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
+        let bob_key_package =
+            crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
 
         let bob_identity = crate::models::Identity {
             username: "bob".to_string(),
             keypair_blob: bob_key.to_public_vec(),
             credential_blob: vec![],
         };
-        let bob_user = MlsUser::new(
-            "bob".to_string(),
-            bob_identity,
-            bob_key,
-            bob_cred,
-        );
+        let bob_user = MlsUser::new("bob".to_string(), bob_identity, bob_key, bob_cred);
 
         let (_commit1, welcome1, _) = crypto::add_members(
             &mut alice_group,
             &provider,
             &alice_key,
             &[bob_key_package.key_package()],
-        ).unwrap();
+        )
+        .unwrap();
         crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
 
         // Bob joins
         let join_config = openmls::prelude::MlsGroupJoinConfig::default();
         let ratchet_tree1 = Some(crypto::export_ratchet_tree(&alice_group));
         let serialized1 = welcome1.tls_serialize_detached().unwrap();
-        let welcome1_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized1.as_slice()).unwrap();
-        let bob_group = crypto::process_welcome_message(&provider, &join_config, &welcome1_in, ratchet_tree1).unwrap();
+        let welcome1_in =
+            openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized1.as_slice()).unwrap();
+        let bob_group =
+            crypto::process_welcome_message(&provider, &join_config, &welcome1_in, ratchet_tree1)
+                .unwrap();
 
         let group_id = bob_group.group_id().as_slice().to_vec();
         let mut bob_membership = MlsMembership {
@@ -1024,13 +1093,15 @@ mod tests {
 
         // Alice adds Carol
         let (carol_cred, carol_key) = crypto::generate_credential_with_key("carol").unwrap();
-        let carol_key_package = crypto::generate_key_package_bundle(&carol_cred, &carol_key, &provider).unwrap();
+        let carol_key_package =
+            crypto::generate_key_package_bundle(&carol_cred, &carol_key, &provider).unwrap();
         let (commit2, _welcome2, _) = crypto::add_members(
             &mut alice_group,
             &provider,
             &alice_key,
             &[carol_key_package.key_package()],
-        ).unwrap();
+        )
+        .unwrap();
         crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
 
         // Serialize commit for envelope
@@ -1045,7 +1116,9 @@ mod tests {
         };
 
         // Bob processes commit
-        let result = bob_membership.process_incoming_message(commit_envelope, &bob_user, &provider).await;
+        let result = bob_membership
+            .process_incoming_message(commit_envelope, &bob_user, &provider)
+            .await;
         assert!(result.is_ok());
 
         // Verify Bob now sees 3 members

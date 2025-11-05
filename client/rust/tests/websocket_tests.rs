@@ -3,11 +3,11 @@
 /// Tests cover real WebSocket connectivity with the server including
 /// subscriptions, message sending/receiving, and persistence.
 use mls_chat_client::api::ServerApi;
-use mls_chat_client::websocket::MessageHandler;
 use mls_chat_client::crypto;
 use mls_chat_client::models::MlsMessageEnvelope;
-use tls_codec::Serialize;
+use mls_chat_client::websocket::MessageHandler;
 use std::time::Duration;
+use tls_codec::Serialize;
 
 /// Helper function to generate a valid KeyPackage for testing
 fn generate_test_key_package(username: &str) -> Vec<u8> {
@@ -16,12 +16,12 @@ fn generate_test_key_package(username: &str) -> Vec<u8> {
 
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let db_path = temp_dir.path().join("test.db");
-    let provider = mls_chat_client::provider::MlsProvider::new(&db_path)
-        .expect("Failed to create provider");
+    let provider =
+        mls_chat_client::provider::MlsProvider::new(&db_path).expect("Failed to create provider");
 
     // Generate credential and signature key
-    let (credential, sig_key) = crypto::generate_credential_with_key(username)
-        .expect("Failed to generate credential");
+    let (credential, sig_key) =
+        crypto::generate_credential_with_key(username).expect("Failed to generate credential");
 
     // Generate key package bundle
     let key_package_bundle = crypto::generate_key_package_bundle(&credential, &sig_key, &provider)
@@ -37,8 +37,8 @@ fn generate_test_key_package(username: &str) -> Vec<u8> {
 #[tokio::test]
 async fn test_websocket_connect() {
     // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
-        .expect("Failed to create test server");
+    let (server, addr) =
+        mls_chat_server::server::create_test_http_server().expect("Failed to create test server");
     tokio::spawn(server);
 
     // Give server a moment to bind
@@ -60,8 +60,8 @@ async fn test_websocket_connect() {
 #[tokio::test]
 async fn test_subscribe_to_group() {
     // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
-        .expect("Failed to create test server");
+    let (server, addr) =
+        mls_chat_server::server::create_test_http_server().expect("Failed to create test server");
     tokio::spawn(server);
 
     // Give server a moment to bind
@@ -88,8 +88,8 @@ async fn test_subscribe_to_group() {
 #[tokio::test]
 async fn test_send_message_via_websocket() {
     // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
-        .expect("Failed to create test server");
+    let (server, addr) =
+        mls_chat_server::server::create_test_http_server().expect("Failed to create test server");
     tokio::spawn(server);
 
     // Give server a moment to bind
@@ -183,13 +183,10 @@ async fn test_two_clients_exchange_messages() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Verify message was routed to Alice with a timeout
-    let received = tokio::time::timeout(
-        Duration::from_secs(2),
-        alice_handler.next_envelope(),
-    )
-    .await
-    .expect("Alice should receive message within 2 seconds")
-    .expect("Alice should receive Bob's envelope");
+    let received = tokio::time::timeout(Duration::from_secs(2), alice_handler.next_envelope())
+        .await
+        .expect("Alice should receive message within 2 seconds")
+        .expect("Alice should receive Bob's envelope");
 
     assert!(received.is_some(), "Alice should receive envelope from Bob");
 
@@ -227,7 +224,10 @@ async fn test_two_clients_exchange_messages() {
         messages[0].encrypted_content, "hello_from_bob",
         "Persisted message content should match"
     );
-    assert_eq!(messages[0].sender_id, bob_user.id, "Sender ID should match Bob");
+    assert_eq!(
+        messages[0].sender_id, bob_user.id,
+        "Sender ID should match Bob"
+    );
 }
 
 #[tokio::test]
@@ -315,7 +315,10 @@ async fn test_multiple_groups_isolation() {
         group1_messages[0].encrypted_content, "message_for_group1",
         "group1 message content should match"
     );
-    assert_eq!(group1_messages[0].sender_id, alice_user.id, "Sender should be alice");
+    assert_eq!(
+        group1_messages[0].sender_id, alice_user.id,
+        "Sender should be alice"
+    );
 
     // Verify group2 has its message
     let group2_messages = mls_chat_server::db::Database::get_group_messages(&pool, group2.id, 100)
@@ -327,7 +330,10 @@ async fn test_multiple_groups_isolation() {
         group2_messages[0].encrypted_content, "message_for_group2",
         "group2 message content should match"
     );
-    assert_eq!(group2_messages[0].sender_id, alice_user.id, "Sender should be alice");
+    assert_eq!(
+        group2_messages[0].sender_id, alice_user.id,
+        "Sender should be alice"
+    );
 
     // Verify messages are isolated - no cross-group pollution
     assert_ne!(
@@ -370,7 +376,7 @@ async fn test_message_persistence() {
     // Note: The server stores messages sent via WebSocket in the database
     let envelope = MlsMessageEnvelope::ApplicationMessage {
         sender: "alice".to_string(),
-        group_id: "persistent_group".to_string(),  // Must match the group we subscribed to
+        group_id: "persistent_group".to_string(), // Must match the group we subscribed to
         encrypted_content: "message_to_persist".to_string(),
     };
 

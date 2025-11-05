@@ -56,9 +56,12 @@ impl LocalStore {
     fn current_timestamp() -> Result<i64> {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| crate::error::ClientError::Io(std::io::Error::other(
-                format!("System time error: {}", e),
-            )))
+            .map_err(|e| {
+                crate::error::ClientError::Io(std::io::Error::other(format!(
+                    "System time error: {}",
+                    e
+                )))
+            })
             .map(|d| d.as_secs() as i64)
     }
 
@@ -122,13 +125,13 @@ impl LocalStore {
     /// Load public key for a username (used for looking up stored signatures in OpenMLS provider)
     pub fn load_public_key(&self, username: &str) -> Result<Option<Vec<u8>>> {
         use rusqlite::OptionalExtension;
-        let mut stmt = self.conn.prepare(
-            "SELECT public_key_blob FROM identities WHERE username = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT public_key_blob FROM identities WHERE username = ?1")?;
 
-        let result = stmt.query_row((username,), |row| {
-            row.get::<_, Vec<u8>>(0)
-        }).optional()?;
+        let result = stmt
+            .query_row((username,), |row| row.get::<_, Vec<u8>>(0))
+            .optional()?;
 
         Ok(result)
     }
@@ -176,9 +179,9 @@ impl LocalStore {
 
     /// Count KeyPackages by status
     pub fn count_by_status(&self, status: &str) -> Result<usize> {
-        let mut stmt = self.conn.prepare(
-            "SELECT COUNT(*) FROM keypackage_pool_metadata WHERE status = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT COUNT(*) FROM keypackage_pool_metadata WHERE status = ?1")?;
 
         let count = stmt.query_row((status,), |row| row.get(0))?;
         Ok(count)
@@ -188,14 +191,13 @@ impl LocalStore {
     ///
     /// Returns KeyPackage refs where not_after < current_time
     pub fn get_expired_refs(&self, current_time: i64) -> Result<Vec<Vec<u8>>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT keypackage_ref FROM keypackage_pool_metadata WHERE not_after < ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT keypackage_ref FROM keypackage_pool_metadata WHERE not_after < ?1")?;
 
-        let refs = stmt.query_map((current_time,), |row| {
-            row.get::<_, Vec<u8>>(0)
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        let refs = stmt
+            .query_map((current_time,), |row| row.get::<_, Vec<u8>>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(refs)
     }
@@ -207,26 +209,27 @@ impl LocalStore {
                     not_after, reservation_id, reservation_expires_at, reserved_by,
                     spent_group_id, spent_by
              FROM keypackage_pool_metadata
-             WHERE status = ?1"
+             WHERE status = ?1",
         )?;
 
-        let metadata = stmt.query_map((status,), |row| {
-            Ok(KeyPackageMetadata {
-                keypackage_ref: row.get(0)?,
-                status: row.get(1)?,
-                created_at: row.get(2)?,
-                uploaded_at: row.get(3)?,
-                reserved_at: row.get(4)?,
-                spent_at: row.get(5)?,
-                not_after: row.get(6)?,
-                reservation_id: row.get(7)?,
-                reservation_expires_at: row.get(8)?,
-                reserved_by: row.get(9)?,
-                spent_group_id: row.get(10)?,
-                spent_by: row.get(11)?,
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        let metadata = stmt
+            .query_map((status,), |row| {
+                Ok(KeyPackageMetadata {
+                    keypackage_ref: row.get(0)?,
+                    status: row.get(1)?,
+                    created_at: row.get(2)?,
+                    uploaded_at: row.get(3)?,
+                    reserved_at: row.get(4)?,
+                    spent_at: row.get(5)?,
+                    not_after: row.get(6)?,
+                    reservation_id: row.get(7)?,
+                    reservation_expires_at: row.get(8)?,
+                    reserved_by: row.get(9)?,
+                    spent_group_id: row.get(10)?,
+                    spent_by: row.get(11)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(metadata)
     }
@@ -269,12 +272,7 @@ impl LocalStore {
     /// Mark a KeyPackage as spent
     ///
     /// Called when server confirms the key was consumed
-    pub fn mark_spent(
-        &self,
-        keypackage_ref: &[u8],
-        spent_by: &str,
-        group_id: &[u8],
-    ) -> Result<()> {
+    pub fn mark_spent(&self, keypackage_ref: &[u8], spent_by: &str, group_id: &[u8]) -> Result<()> {
         let now = Self::current_timestamp()?;
 
         self.conn.execute(

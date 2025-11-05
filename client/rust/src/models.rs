@@ -35,16 +35,16 @@ pub enum MlsMessageEnvelope {
     #[serde(rename = "welcome")]
     WelcomeMessage {
         inviter: String,
-        invitee: String,  // Username of the person being invited (for server routing)
-        welcome_blob: String,  // TLS-serialized Welcome message (base64)
-        ratchet_tree_blob: String,  // Exported ratchet tree (base64)
+        invitee: String, // Username of the person being invited (for server routing)
+        welcome_blob: String, // TLS-serialized Welcome message (base64)
+        ratchet_tree_blob: String, // Exported ratchet tree (base64)
     },
     /// Commit message: group state change notification
     #[serde(rename = "commit")]
     CommitMessage {
         group_id: String,
         sender: String,
-        commit_blob: String,  // TLS-serialized Commit message (base64)
+        commit_blob: String, // TLS-serialized Commit message (base64)
     },
 }
 
@@ -69,26 +69,26 @@ impl Command {
     /// Parse a command string
     pub fn parse(input: &str) -> Result<Self, String> {
         let input = input.trim();
-        
+
         if input == "/quit" || input == "/exit" {
             return Ok(Command::Quit);
         }
-        
+
         if input == "/list" {
             return Ok(Command::List);
         }
-        
+
         if let Some(invitee) = input.strip_prefix("/invite ") {
             if invitee.is_empty() {
                 return Err("Usage: /invite <username>".to_string());
             }
             return Ok(Command::Invite(invitee.to_string()));
         }
-        
+
         if input.starts_with('/') {
             return Err(format!("Unknown command: {}", input));
         }
-        
+
         Ok(Command::Message(input.to_string()))
     }
 }
@@ -99,9 +99,15 @@ mod tests {
 
     #[test]
     fn test_command_parsing() {
-        assert_eq!(Command::parse("/invite alice"), Ok(Command::Invite("alice".to_string())));
+        assert_eq!(
+            Command::parse("/invite alice"),
+            Ok(Command::Invite("alice".to_string()))
+        );
         assert_eq!(Command::parse("/list"), Ok(Command::List));
-        assert_eq!(Command::parse("Hello world"), Ok(Command::Message("Hello world".to_string())));
+        assert_eq!(
+            Command::parse("Hello world"),
+            Ok(Command::Message("Hello world".to_string()))
+        );
         assert_eq!(Command::parse("/quit"), Ok(Command::Quit));
         assert_eq!(Command::parse("/exit"), Ok(Command::Quit));
 
@@ -179,7 +185,8 @@ mod tests {
 
     #[test]
     fn test_envelope_type_discrimination() {
-        let app_json = r#"{"type":"application","sender":"alice","group_id":"g1","encrypted_content":"data"}"#;
+        let app_json =
+            r#"{"type":"application","sender":"alice","group_id":"g1","encrypted_content":"data"}"#;
         let welcome_json = r#"{"type":"welcome","inviter":"alice","invitee":"bob","welcome_blob":"w","ratchet_tree_blob":"rt"}"#;
         let commit_json = r#"{"type":"commit","group_id":"g1","sender":"alice","commit_blob":"c"}"#;
 

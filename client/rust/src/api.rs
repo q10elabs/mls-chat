@@ -1,6 +1,6 @@
 //! Server API client for REST endpoints
 
-use crate::error::{Result, NetworkError};
+use crate::error::{NetworkError, Result};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -41,7 +41,7 @@ impl ServerApi {
             .timeout(Duration::from_secs(30))
             .build()
             .expect("Failed to create HTTP client");
-        
+
         Self {
             client,
             base_url: base_url.to_string(),
@@ -59,7 +59,8 @@ impl ServerApi {
             key_package: key_package.to_vec(),
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/users", self.base_url))
             .json(&request)
             .send()
@@ -72,7 +73,10 @@ impl ServerApi {
             }
             StatusCode::CONFLICT => {
                 // User already registered - verify the stored key package matches
-                log::info!("User {} already registered, validating key package", username);
+                log::info!(
+                    "User {} already registered, validating key package",
+                    username
+                );
 
                 match self.get_user_key(username).await {
                     Ok(remote_key_package) => {
@@ -94,22 +98,27 @@ impl ServerApi {
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to verify key package for user {} on conflict: {}", username, e);
-                        Err(NetworkError::Server(
-                            format!("Cannot verify existing user {}: {}", username, e)
-                        ).into())
+                        log::error!(
+                            "Failed to verify key package for user {} on conflict: {}",
+                            username,
+                            e
+                        );
+                        Err(NetworkError::Server(format!(
+                            "Cannot verify existing user {}: {}",
+                            username, e
+                        ))
+                        .into())
                     }
                 }
             }
-            status => {
-                Err(NetworkError::Server(format!("Registration failed: {}", status)).into())
-            }
+            status => Err(NetworkError::Server(format!("Registration failed: {}", status)).into()),
         }
     }
 
     /// Get a user's KeyPackage from the server
     pub async fn get_user_key(&self, username: &str) -> Result<Vec<u8>> {
-        let response = self.client
+        let response = self
+            .client
             .get(format!("{}/users/{}", self.base_url, username))
             .send()
             .await?;
@@ -120,13 +129,17 @@ impl ServerApi {
         } else if response.status() == 404 {
             Err(NetworkError::Server("User not found".to_string()).into())
         } else {
-            Err(NetworkError::Server(format!("Failed to get user key: {}", response.status())).into())
+            Err(
+                NetworkError::Server(format!("Failed to get user key: {}", response.status()))
+                    .into(),
+            )
         }
     }
 
     /// Check if the server is healthy
     pub async fn health_check(&self) -> Result<()> {
-        let response = self.client
+        let response = self
+            .client
             .get(format!("{}/health", self.base_url))
             .send()
             .await?;

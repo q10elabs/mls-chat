@@ -13,12 +13,12 @@ fn generate_test_key_package(username: &str) -> Vec<u8> {
 
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let db_path = temp_dir.path().join("test.db");
-    let provider = mls_chat_client::provider::MlsProvider::new(&db_path)
-        .expect("Failed to create provider");
+    let provider =
+        mls_chat_client::provider::MlsProvider::new(&db_path).expect("Failed to create provider");
 
     // Generate credential and signature key
-    let (credential, sig_key) = crypto::generate_credential_with_key(username)
-        .expect("Failed to generate credential");
+    let (credential, sig_key) =
+        crypto::generate_credential_with_key(username).expect("Failed to generate credential");
 
     // Generate key package bundle
     let key_package_bundle = crypto::generate_key_package_bundle(&credential, &sig_key, &provider)
@@ -34,8 +34,8 @@ fn generate_test_key_package(username: &str) -> Vec<u8> {
 #[tokio::test]
 async fn test_register_new_user() {
     // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
-        .expect("Failed to create test server");
+    let (server, addr) =
+        mls_chat_server::server::create_test_http_server().expect("Failed to create test server");
     tokio::spawn(server);
 
     // Give server a moment to bind
@@ -56,14 +56,17 @@ async fn test_register_new_user() {
         .get_user_key("alice")
         .await
         .expect("Should retrieve user key");
-    assert_eq!(retrieved_key, alice_key_package, "Retrieved key should match registered key");
+    assert_eq!(
+        retrieved_key, alice_key_package,
+        "Retrieved key should match registered key"
+    );
 }
 
 #[tokio::test]
 async fn test_register_duplicate_user() {
     // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
-        .expect("Failed to create test server");
+    let (server, addr) =
+        mls_chat_server::server::create_test_http_server().expect("Failed to create test server");
     tokio::spawn(server);
 
     // Give server a moment to bind
@@ -91,8 +94,8 @@ async fn test_register_duplicate_user() {
 #[tokio::test]
 async fn test_get_user_key() {
     // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
-        .expect("Failed to create test server");
+    let (server, addr) =
+        mls_chat_server::server::create_test_http_server().expect("Failed to create test server");
     tokio::spawn(server);
 
     // Give server a moment to bind
@@ -114,14 +117,17 @@ async fn test_get_user_key() {
         .get_user_key("carol")
         .await
         .expect("Should retrieve user key");
-    assert_eq!(key, carol_key_package, "Retrieved key should match registered key");
+    assert_eq!(
+        key, carol_key_package,
+        "Retrieved key should match registered key"
+    );
 }
 
 #[tokio::test]
 async fn test_get_nonexistent_user() {
     // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
-        .expect("Failed to create test server");
+    let (server, addr) =
+        mls_chat_server::server::create_test_http_server().expect("Failed to create test server");
     tokio::spawn(server);
 
     // Give server a moment to bind
@@ -138,8 +144,8 @@ async fn test_get_nonexistent_user() {
 #[tokio::test]
 async fn test_multiple_users() {
     // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
-        .expect("Failed to create test server");
+    let (server, addr) =
+        mls_chat_server::server::create_test_http_server().expect("Failed to create test server");
     tokio::spawn(server);
 
     // Give server a moment to bind
@@ -184,8 +190,8 @@ async fn test_multiple_users() {
 #[tokio::test]
 async fn test_health_check() {
     // Spawn a test HTTP server and run it in background
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
-        .expect("Failed to create test server");
+    let (server, addr) =
+        mls_chat_server::server::create_test_http_server().expect("Failed to create test server");
     tokio::spawn(server);
 
     // Give server a moment to bind

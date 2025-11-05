@@ -1,9 +1,9 @@
 /// MLS Chat Client - Main entry point
-/// 
+///
 /// A command-line client for MLS group messaging using OpenMLS
 use clap::Parser;
 use log::info;
-use mls_chat_client::{client::MlsClient, cli, Result};
+use mls_chat_client::{cli, client::MlsClient, Result};
 
 #[derive(Parser)]
 #[command(name = "mls-client")]
@@ -55,8 +55,9 @@ async fn main() -> Result<()> {
     } else {
         // Default to ~/.mlschat
         use directories::BaseDirs;
-        let base_dirs = BaseDirs::new()
-            .ok_or_else(|| mls_chat_client::error::ClientError::Config("Failed to get home directory".to_string()))?;
+        let base_dirs = BaseDirs::new().ok_or_else(|| {
+            mls_chat_client::error::ClientError::Config("Failed to get home directory".to_string())
+        })?;
         base_dirs.home_dir().join(".mlschat")
     };
 

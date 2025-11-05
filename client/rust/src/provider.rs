@@ -5,7 +5,7 @@
 //! - SqliteStorageProvider for persistent group state
 //! - Automatic serialization/deserialization of MLS state
 
-use crate::error::{Result, ClientError};
+use crate::error::{ClientError, Result};
 use openmls::prelude::*;
 use openmls_rust_crypto::RustCrypto;
 use openmls_sqlite_storage::SqliteStorageProvider;
@@ -24,7 +24,9 @@ impl openmls_sqlite_storage::Codec for BincodeCodec {
         bincode::serialize(value)
     }
 
-    fn from_slice<T: serde::de::DeserializeOwned>(slice: &[u8]) -> std::result::Result<T, Self::Error> {
+    fn from_slice<T: serde::de::DeserializeOwned>(
+        slice: &[u8],
+    ) -> std::result::Result<T, Self::Error> {
         bincode::deserialize(slice)
     }
 }
@@ -116,9 +118,9 @@ impl MlsProvider {
 
     /// Check if a group name mapping exists
     pub fn group_exists(&self, group_name_key: &str) -> Result<bool> {
-        let mut stmt = self.conn.prepare(
-            "SELECT 1 FROM group_names WHERE group_name_key = ?1 LIMIT 1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT 1 FROM group_names WHERE group_name_key = ?1 LIMIT 1")?;
 
         let exists = stmt.exists((group_name_key,))?;
         Ok(exists)
@@ -128,13 +130,13 @@ impl MlsProvider {
     /// Note: This just checks if a group ID mapping exists; the actual group state
     /// is managed by the OpenMLS provider's storage
     pub fn load_group_by_name(&self, group_name_key: &str) -> Result<Option<Vec<u8>>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT group_id FROM group_names WHERE group_name_key = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT group_id FROM group_names WHERE group_name_key = ?1")?;
 
-        let group_id_opt = stmt.query_row((group_name_key,), |row| {
-            row.get::<_, Vec<u8>>(0)
-        }).optional()?;
+        let group_id_opt = stmt
+            .query_row((group_name_key,), |row| row.get::<_, Vec<u8>>(0))
+            .optional()?;
 
         Ok(group_id_opt)
     }

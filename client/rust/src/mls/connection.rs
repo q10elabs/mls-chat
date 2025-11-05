@@ -35,7 +35,7 @@
 
 use crate::api::ServerApi;
 use crate::crypto;
-use crate::error::{Result, ClientError};
+use crate::error::{ClientError, Result};
 use crate::identity::IdentityManager;
 use crate::mls::membership::MlsMembership;
 use crate::mls::user::MlsUser;
@@ -210,10 +210,7 @@ impl MlsConnection {
         // Try to fetch existing key package from server (may exist from previous session)
         let key_package_bytes = match self.api.get_user_key(&self.username).await {
             Ok(remote_key_package) => {
-                log::info!(
-                    "Found existing key package for {} on server",
-                    self.username
-                );
+                log::info!("Found existing key package for {} on server", self.username);
                 // TODO: Add validation that remote key package matches local identity
                 remote_key_package
             }
@@ -232,9 +229,11 @@ impl MlsConnection {
                 key_package_bundle
                     .key_package()
                     .tls_serialize_detached()
-                    .map_err(|_e| ClientError::Mls(
-                        crate::error::MlsError::OpenMls("Failed to serialize key package".to_string())
-                    ))?
+                    .map_err(|_e| {
+                        ClientError::Mls(crate::error::MlsError::OpenMls(
+                            "Failed to serialize key package".to_string(),
+                        ))
+                    })?
             }
         };
 
@@ -244,7 +243,10 @@ impl MlsConnection {
 
         // === Step 5: Register with server (idempotent) ===
         // This may fail in tests, but user is already stored locally
-        let _ = self.api.register_user(&self.username, &key_package_bytes).await;
+        let _ = self
+            .api
+            .register_user(&self.username, &key_package_bytes)
+            .await;
 
         log::info!("MlsConnection initialized for {}", self.username);
         Ok(())
@@ -342,7 +344,9 @@ impl MlsConnection {
                 log::info!("Received WelcomeMessage from {}", inviter);
 
                 // Create new membership from Welcome message
-                let user = self.user.as_ref()
+                let user = self
+                    .user
+                    .as_ref()
                     .ok_or_else(|| ClientError::Config("User not initialized".to_string()))?;
 
                 let membership = MlsMembership::from_welcome_message(
@@ -377,23 +381,29 @@ impl MlsConnection {
                 group_id,
                 encrypted_content,
             } => {
-                log::debug!("Received ApplicationMessage from {} for group {}", sender, group_id);
+                log::debug!(
+                    "Received ApplicationMessage from {} for group {}",
+                    sender,
+                    group_id
+                );
 
                 // Decode group_id from base64
-                let group_id_bytes = general_purpose::STANDARD
-                    .decode(&group_id)
-                    .map_err(|e| ClientError::Mls(
-                        crate::error::MlsError::OpenMls(format!("Failed to decode group_id: {}", e))
-                    ))?;
+                let group_id_bytes = general_purpose::STANDARD.decode(&group_id).map_err(|e| {
+                    ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                        "Failed to decode group_id: {}",
+                        e
+                    )))
+                })?;
 
                 // Find membership by group_id
-                let membership = self.memberships.get_mut(&group_id_bytes)
-                    .ok_or_else(|| {
-                        log::error!("No membership found for group_id {}", group_id);
-                        ClientError::Config(format!("No membership for group {}", group_id))
-                    })?;
+                let membership = self.memberships.get_mut(&group_id_bytes).ok_or_else(|| {
+                    log::error!("No membership found for group_id {}", group_id);
+                    ClientError::Config(format!("No membership for group {}", group_id))
+                })?;
 
-                let user = self.user.as_ref()
+                let user = self
+                    .user
+                    .as_ref()
                     .ok_or_else(|| ClientError::Config("User not initialized".to_string()))?;
 
                 // Reconstruct envelope for membership processing
@@ -404,30 +414,38 @@ impl MlsConnection {
                 };
 
                 // Delegate to membership
-                membership.process_incoming_message(envelope, user, &self.mls_provider).await
+                membership
+                    .process_incoming_message(envelope, user, &self.mls_provider)
+                    .await
             }
             MlsMessageEnvelope::CommitMessage {
                 group_id,
                 sender,
                 commit_blob,
             } => {
-                log::info!("Received CommitMessage from {} for group {}", sender, group_id);
+                log::info!(
+                    "Received CommitMessage from {} for group {}",
+                    sender,
+                    group_id
+                );
 
                 // Decode group_id from base64
-                let group_id_bytes = general_purpose::STANDARD
-                    .decode(&group_id)
-                    .map_err(|e| ClientError::Mls(
-                        crate::error::MlsError::OpenMls(format!("Failed to decode group_id: {}", e))
-                    ))?;
+                let group_id_bytes = general_purpose::STANDARD.decode(&group_id).map_err(|e| {
+                    ClientError::Mls(crate::error::MlsError::OpenMls(format!(
+                        "Failed to decode group_id: {}",
+                        e
+                    )))
+                })?;
 
                 // Find membership by group_id
-                let membership = self.memberships.get_mut(&group_id_bytes)
-                    .ok_or_else(|| {
-                        log::error!("No membership found for group_id {}", group_id);
-                        ClientError::Config(format!("No membership for group {}", group_id))
-                    })?;
+                let membership = self.memberships.get_mut(&group_id_bytes).ok_or_else(|| {
+                    log::error!("No membership found for group_id {}", group_id);
+                    ClientError::Config(format!("No membership for group {}", group_id))
+                })?;
 
-                let user = self.user.as_ref()
+                let user = self
+                    .user
+                    .as_ref()
                     .ok_or_else(|| ClientError::Config("User not initialized".to_string()))?;
 
                 // Reconstruct envelope for membership processing
@@ -438,7 +456,9 @@ impl MlsConnection {
                 };
 
                 // Delegate to membership
-                membership.process_incoming_message(envelope, user, &self.mls_provider).await
+                membership
+                    .process_incoming_message(envelope, user, &self.mls_provider)
+                    .await
             }
         }
     }
@@ -519,7 +539,10 @@ impl MlsConnection {
     /// The membership's group_id is used as the key in the HashMap.
     pub fn add_membership(&mut self, membership: MlsMembership<'static>) {
         let group_id = membership.get_group_id().to_vec();
-        log::debug!("Adding membership for group_id: {}", general_purpose::STANDARD.encode(&group_id));
+        log::debug!(
+            "Adding membership for group_id: {}",
+            general_purpose::STANDARD.encode(&group_id)
+        );
         self.memberships.insert(group_id, membership);
     }
 
@@ -539,19 +562,27 @@ impl MlsConnection {
     /// * MLS encryption errors
     pub async fn send_message_to_group(&mut self, group_id: &[u8], text: &str) -> Result<()> {
         // Get user first (immutable borrow)
-        let user = self.user.as_ref()
+        let user = self
+            .user
+            .as_ref()
             .ok_or_else(|| ClientError::Config("User not initialized".to_string()))?;
 
         // Get websocket (immutable borrow)
-        let websocket = self.websocket.as_ref()
+        let websocket = self
+            .websocket
+            .as_ref()
             .ok_or_else(|| ClientError::Config("WebSocket not connected".to_string()))?;
 
         // Get membership (mutable borrow - but we've finished with user/websocket immutable borrows above)
-        let membership = self.memberships.get_mut(group_id)
+        let membership = self
+            .memberships
+            .get_mut(group_id)
             .ok_or_else(|| ClientError::Config("Group not found".to_string()))?;
 
         // Call membership method
-        membership.send_message(text, user, &self.mls_provider, &self.api, websocket).await
+        membership
+            .send_message(text, user, &self.mls_provider, &self.api, websocket)
+            .await
     }
 
     /// Invite a user to a specific group
@@ -566,21 +597,39 @@ impl MlsConnection {
     /// * Group not found
     /// * User not initialized
     /// * Server errors
-    pub async fn invite_user_to_group(&mut self, group_id: &[u8], invitee_username: &str) -> Result<()> {
+    pub async fn invite_user_to_group(
+        &mut self,
+        group_id: &[u8],
+        invitee_username: &str,
+    ) -> Result<()> {
         // Get user first
-        let user = self.user.as_ref()
+        let user = self
+            .user
+            .as_ref()
             .ok_or_else(|| ClientError::Config("User not initialized".to_string()))?;
 
         // Get websocket
-        let websocket = self.websocket.as_ref()
+        let websocket = self
+            .websocket
+            .as_ref()
             .ok_or_else(|| ClientError::Config("WebSocket not connected".to_string()))?;
 
         // Get membership
-        let membership = self.memberships.get_mut(group_id)
+        let membership = self
+            .memberships
+            .get_mut(group_id)
             .ok_or_else(|| ClientError::Config("Group not found".to_string()))?;
 
         // Call membership method
-        membership.invite_user(invitee_username, user, &self.mls_provider, &self.api, websocket).await
+        membership
+            .invite_user(
+                invitee_username,
+                user,
+                &self.mls_provider,
+                &self.api,
+                websocket,
+            )
+            .await
     }
 }
 
@@ -600,11 +649,8 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let storage_dir = temp_dir.path();
 
-        let connection = MlsConnection::new_with_storage_path(
-            "http://localhost:4000",
-            "alice",
-            storage_dir,
-        );
+        let connection =
+            MlsConnection::new_with_storage_path("http://localhost:4000", "alice", storage_dir);
 
         assert!(connection.is_ok(), "Connection creation should succeed");
         let conn = connection.unwrap();
@@ -624,12 +670,9 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let storage_dir = temp_dir.path();
 
-        let mut connection = MlsConnection::new_with_storage_path(
-            "http://localhost:4000",
-            "alice",
-            storage_dir,
-        )
-        .unwrap();
+        let mut connection =
+            MlsConnection::new_with_storage_path("http://localhost:4000", "alice", storage_dir)
+                .unwrap();
 
         // User should not exist before initialize
         assert!(connection.get_user().is_none());
@@ -656,12 +699,9 @@ mod tests {
     fn test_connection_accessors() {
         let temp_dir = tempdir().unwrap();
 
-        let connection = MlsConnection::new_with_storage_path(
-            "http://localhost:4000",
-            "bob",
-            temp_dir.path(),
-        )
-        .unwrap();
+        let connection =
+            MlsConnection::new_with_storage_path("http://localhost:4000", "bob", temp_dir.path())
+                .unwrap();
 
         assert_eq!(connection.get_username(), "bob");
         let provider_ptr = connection.get_provider() as *const MlsProvider;
@@ -684,12 +724,9 @@ mod tests {
     fn test_membership_lookup_by_group_id() {
         let temp_dir = tempdir().unwrap();
 
-        let connection = MlsConnection::new_with_storage_path(
-            "http://localhost:4000",
-            "alice",
-            temp_dir.path(),
-        )
-        .unwrap();
+        let connection =
+            MlsConnection::new_with_storage_path("http://localhost:4000", "alice", temp_dir.path())
+                .unwrap();
 
         // No memberships initially
         let fake_group_id = vec![1, 2, 3, 4];
@@ -722,24 +759,17 @@ mod tests {
         let alice_provider = MlsProvider::new(alice_storage.join("mls.db")).unwrap();
 
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let mut alice_group = crypto::create_group_with_config(
-            &alice_cred,
-            &alice_key,
-            &alice_provider,
-            "testgroup",
-        )
-        .unwrap();
+        let mut alice_group =
+            crypto::create_group_with_config(&alice_cred, &alice_key, &alice_provider, "testgroup")
+                .unwrap();
 
         // === Bob creates a connection and initializes ===
         let bob_storage = temp_dir.path().join("bob");
         std::fs::create_dir_all(&bob_storage).unwrap();
 
-        let mut bob_connection = MlsConnection::new_with_storage_path(
-            "http://localhost:4000",
-            "bob",
-            &bob_storage,
-        )
-        .unwrap();
+        let mut bob_connection =
+            MlsConnection::new_with_storage_path("http://localhost:4000", "bob", &bob_storage)
+                .unwrap();
 
         // Initialize Bob's user (server registration will fail, but user is created locally)
         let _ = bob_connection.initialize().await;
@@ -782,13 +812,18 @@ mod tests {
             ratchet_tree_blob: ratchet_tree_b64,
         };
 
-        let result = bob_connection.process_incoming_envelope(welcome_envelope).await;
+        let result = bob_connection
+            .process_incoming_envelope(welcome_envelope)
+            .await;
         assert!(result.is_ok(), "Welcome processing should succeed");
 
         // === Verify membership was created ===
         let group_id = alice_group.group_id().as_slice();
         let membership = bob_connection.get_membership(group_id);
-        assert!(membership.is_some(), "Membership should exist after Welcome");
+        assert!(
+            membership.is_some(),
+            "Membership should exist after Welcome"
+        );
 
         let membership = membership.unwrap();
         assert_eq!(membership.get_group_name(), "testgroup");
@@ -810,23 +845,16 @@ mod tests {
         let alice_provider = MlsProvider::new(alice_storage.join("mls.db")).unwrap();
 
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let mut alice_group = crypto::create_group_with_config(
-            &alice_cred,
-            &alice_key,
-            &alice_provider,
-            "testgroup",
-        )
-        .unwrap();
+        let mut alice_group =
+            crypto::create_group_with_config(&alice_cred, &alice_key, &alice_provider, "testgroup")
+                .unwrap();
 
         // Bob setup
         let bob_storage = temp_dir.path().join("bob");
         std::fs::create_dir_all(&bob_storage).unwrap();
-        let mut bob_connection = MlsConnection::new_with_storage_path(
-            "http://localhost:4000",
-            "bob",
-            &bob_storage,
-        )
-        .unwrap();
+        let mut bob_connection =
+            MlsConnection::new_with_storage_path("http://localhost:4000", "bob", &bob_storage)
+                .unwrap();
         let _ = bob_connection.initialize().await;
 
         // Alice invites Bob
@@ -861,7 +889,10 @@ mod tests {
             welcome_blob: welcome_b64,
             ratchet_tree_blob: ratchet_tree_b64,
         };
-        bob_connection.process_incoming_envelope(welcome_envelope).await.unwrap();
+        bob_connection
+            .process_incoming_envelope(welcome_envelope)
+            .await
+            .unwrap();
 
         // === Alice sends a message ===
         // Store group_id before mutable borrow
@@ -888,7 +919,10 @@ mod tests {
 
         // === Bob processes the message ===
         let result = bob_connection.process_incoming_envelope(app_envelope).await;
-        assert!(result.is_ok(), "ApplicationMessage processing should succeed");
+        assert!(
+            result.is_ok(),
+            "ApplicationMessage processing should succeed"
+        );
     }
 
     /// Test that CommitMessage routing works
@@ -906,23 +940,16 @@ mod tests {
         let alice_provider = MlsProvider::new(alice_storage.join("mls.db")).unwrap();
 
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-        let mut alice_group = crypto::create_group_with_config(
-            &alice_cred,
-            &alice_key,
-            &alice_provider,
-            "testgroup",
-        )
-        .unwrap();
+        let mut alice_group =
+            crypto::create_group_with_config(&alice_cred, &alice_key, &alice_provider, "testgroup")
+                .unwrap();
 
         // Bob setup and join
         let bob_storage = temp_dir.path().join("bob");
         std::fs::create_dir_all(&bob_storage).unwrap();
-        let mut bob_connection = MlsConnection::new_with_storage_path(
-            "http://localhost:4000",
-            "bob",
-            &bob_storage,
-        )
-        .unwrap();
+        let mut bob_connection =
+            MlsConnection::new_with_storage_path("http://localhost:4000", "bob", &bob_storage)
+                .unwrap();
         let _ = bob_connection.initialize().await;
 
         let bob_user = bob_connection.get_user().unwrap();
@@ -950,12 +977,15 @@ mod tests {
         let ratchet_tree1_bytes = serde_json::to_vec(&ratchet_tree1).unwrap();
         let ratchet_tree1_b64 = general_purpose::STANDARD.encode(&ratchet_tree1_bytes);
 
-        bob_connection.process_incoming_envelope(MlsMessageEnvelope::WelcomeMessage {
-            inviter: "alice".to_string(),
-            invitee: "bob".to_string(),
-            welcome_blob: welcome1_b64,
-            ratchet_tree_blob: ratchet_tree1_b64,
-        }).await.unwrap();
+        bob_connection
+            .process_incoming_envelope(MlsMessageEnvelope::WelcomeMessage {
+                inviter: "alice".to_string(),
+                invitee: "bob".to_string(),
+                welcome_blob: welcome1_b64,
+                ratchet_tree_blob: ratchet_tree1_b64,
+            })
+            .await
+            .unwrap();
 
         // Verify Bob sees 2 members initially (store group_id before mutable borrows)
         let group_id = alice_group.group_id().as_slice().to_vec();
@@ -964,12 +994,8 @@ mod tests {
 
         // === Alice adds Carol ===
         let (carol_cred, carol_key) = crypto::generate_credential_with_key("carol").unwrap();
-        let carol_key_package = crypto::generate_key_package_bundle(
-            &carol_cred,
-            &carol_key,
-            &alice_provider,
-        )
-        .unwrap();
+        let carol_key_package =
+            crypto::generate_key_package_bundle(&carol_cred, &carol_key, &alice_provider).unwrap();
 
         let (commit2, _welcome2, _) = crypto::add_members(
             &mut alice_group,
@@ -992,7 +1018,9 @@ mod tests {
         };
 
         // Process commit
-        let result = bob_connection.process_incoming_envelope(commit_envelope).await;
+        let result = bob_connection
+            .process_incoming_envelope(commit_envelope)
+            .await;
         assert!(result.is_ok(), "CommitMessage processing should succeed");
 
         // Verify Bob now sees 3 members

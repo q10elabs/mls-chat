@@ -3,11 +3,11 @@
 //! Provides a high-level API for MLS operations by delegating to MlsConnection.
 //! MlsClient is a thin wrapper that manages the selected group for single-group CLI usage.
 
-use crate::error::{Result, ClientError};
-use crate::mls::connection::MlsConnection;
 use crate::api::ServerApi;
-use crate::provider::MlsProvider;
+use crate::error::{ClientError, Result};
+use crate::mls::connection::MlsConnection;
 use crate::models::Identity;
+use crate::provider::MlsProvider;
 use std::path::Path;
 
 /// Main MLS client
@@ -57,7 +57,11 @@ impl MlsClient {
         group_name: &str,
         storage_dir: &Path,
     ) -> Result<Self> {
-        log::info!("Creating MlsClient for {} (group: {})", username, group_name);
+        log::info!(
+            "Creating MlsClient for {} (group: {})",
+            username,
+            group_name
+        );
 
         // Create MlsConnection with infrastructure
         let connection = MlsConnection::new_with_storage_path(server_url, username, storage_dir)?;
@@ -98,8 +102,9 @@ impl MlsClient {
         self.connection.connect_websocket().await?;
 
         // Get user from connection
-        let user = self.connection.get_user()
-            .ok_or_else(|| ClientError::Config("User not initialized - call initialize() first".to_string()))?;
+        let user = self.connection.get_user().ok_or_else(|| {
+            ClientError::Config("User not initialized - call initialize() first".to_string())
+        })?;
 
         // Try to load or create membership for the initial group
         use crate::mls::membership::MlsMembership;
@@ -116,7 +121,10 @@ impl MlsClient {
         // Add membership to connection's HashMap
         self.connection.add_membership(membership);
 
-        log::info!("Connected to group '{}' successfully", self.initial_group_name);
+        log::info!(
+            "Connected to group '{}' successfully",
+            self.initial_group_name
+        );
 
         Ok(())
     }
@@ -131,7 +139,9 @@ impl MlsClient {
     /// * MLS encryption errors
     pub async fn send_message(&mut self, text: &str) -> Result<()> {
         // Get selected group ID
-        let group_id = self.selected_group_id.as_ref()
+        let group_id = self
+            .selected_group_id
+            .as_ref()
             .ok_or_else(|| ClientError::Config("No group selected".to_string()))?;
 
         // Delegate to connection helper method (handles borrow complexity)
@@ -148,11 +158,15 @@ impl MlsClient {
     /// * MLS operation errors
     pub async fn invite_user(&mut self, invitee_username: &str) -> Result<()> {
         // Get selected group ID
-        let group_id = self.selected_group_id.as_ref()
+        let group_id = self
+            .selected_group_id
+            .as_ref()
             .ok_or_else(|| ClientError::Config("No group selected".to_string()))?;
 
         // Delegate to connection helper method
-        self.connection.invite_user_to_group(group_id, invitee_username).await
+        self.connection
+            .invite_user_to_group(group_id, invitee_username)
+            .await
     }
 
     /// List group members
@@ -178,10 +192,14 @@ impl MlsClient {
     /// * No group selected
     /// * Selected group not found in memberships
     pub fn get_current_group_name(&self) -> Result<String> {
-        let group_id = self.selected_group_id.as_ref()
+        let group_id = self
+            .selected_group_id
+            .as_ref()
             .ok_or_else(|| ClientError::Config("No group selected".to_string()))?;
 
-        let membership = self.connection.get_membership(group_id)
+        let membership = self
+            .connection
+            .get_membership(group_id)
             .ok_or_else(|| ClientError::Config("Selected group not found".to_string()))?;
 
         Ok(membership.get_group_name().to_string())
@@ -239,7 +257,10 @@ impl MlsClient {
 
     /// Test helper: get signature key
     pub fn has_signature_key(&self) -> bool {
-        self.connection.get_user().map(|u| u.get_signature_key()).is_some()
+        self.connection
+            .get_user()
+            .map(|u| u.get_signature_key())
+            .is_some()
     }
 
     /// Test helper: get websocket status

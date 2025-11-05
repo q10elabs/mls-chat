@@ -42,7 +42,9 @@ fn test_create_pool_metadata() {
     let keypackage_ref = b"test_ref_123";
     let not_after = 1700000000i64; // Some future timestamp
 
-    store.create_pool_metadata(keypackage_ref, not_after).unwrap();
+    store
+        .create_pool_metadata(keypackage_ref, not_after)
+        .unwrap();
 
     // Verify it was created with 'created' status
     let count = store.count_by_status("created").unwrap();
@@ -56,7 +58,9 @@ fn test_create_multiple_pool_metadata() {
     for i in 0..5 {
         let keypackage_ref = format!("ref_{}", i).into_bytes();
         let not_after = 1700000000i64 + i as i64;
-        store.create_pool_metadata(&keypackage_ref, not_after).unwrap();
+        store
+            .create_pool_metadata(&keypackage_ref, not_after)
+            .unwrap();
     }
 
     let count = store.count_by_status("created").unwrap();
@@ -68,10 +72,14 @@ fn test_update_pool_metadata_status() {
     let (store, _temp) = setup_store();
 
     let keypackage_ref = b"test_ref";
-    store.create_pool_metadata(keypackage_ref, 1700000000).unwrap();
+    store
+        .create_pool_metadata(keypackage_ref, 1700000000)
+        .unwrap();
 
     // Update to uploaded
-    store.update_pool_metadata_status(keypackage_ref, "uploaded").unwrap();
+    store
+        .update_pool_metadata_status(keypackage_ref, "uploaded")
+        .unwrap();
 
     let created_count = store.count_by_status("created").unwrap();
     let uploaded_count = store.count_by_status("uploaded").unwrap();
@@ -85,13 +93,17 @@ fn test_status_transitions() {
     let (store, _temp) = setup_store();
 
     let keypackage_ref = b"test_ref";
-    store.create_pool_metadata(keypackage_ref, 1700000000).unwrap();
+    store
+        .create_pool_metadata(keypackage_ref, 1700000000)
+        .unwrap();
 
     // created -> uploaded -> available -> reserved -> spent
     let transitions = vec!["uploaded", "available", "reserved", "spent"];
 
     for status in transitions {
-        store.update_pool_metadata_status(keypackage_ref, status).unwrap();
+        store
+            .update_pool_metadata_status(keypackage_ref, status)
+            .unwrap();
         let count = store.count_by_status(status).unwrap();
         assert_eq!(count, 1, "Failed transition to {}", status);
     }
@@ -111,13 +123,17 @@ fn test_count_by_status_multiple_statuses() {
     for i in 0..2 {
         let ref_bytes = format!("uploaded_{}", i).into_bytes();
         store.create_pool_metadata(&ref_bytes, 1700000000).unwrap();
-        store.update_pool_metadata_status(&ref_bytes, "uploaded").unwrap();
+        store
+            .update_pool_metadata_status(&ref_bytes, "uploaded")
+            .unwrap();
     }
 
     // Create 1 in spent state
     let spent_ref = b"spent_0";
     store.create_pool_metadata(spent_ref, 1700000000).unwrap();
-    store.update_pool_metadata_status(spent_ref, "spent").unwrap();
+    store
+        .update_pool_metadata_status(spent_ref, "spent")
+        .unwrap();
 
     assert_eq!(store.count_by_status("created").unwrap(), 3);
     assert_eq!(store.count_by_status("uploaded").unwrap(), 2);
@@ -149,7 +165,8 @@ fn test_get_expired_refs() {
     assert_eq!(expired_refs.len(), 3);
 
     // Verify the expired refs are correct
-    let expired_names: Vec<String> = expired_refs.iter()
+    let expired_names: Vec<String> = expired_refs
+        .iter()
         .map(|r| String::from_utf8(r.clone()).unwrap())
         .collect();
 
@@ -182,14 +199,22 @@ fn test_get_metadata_by_status() {
     // Create 2 keys with 'available' status
     for i in 0..2 {
         let ref_bytes = format!("available_{}", i).into_bytes();
-        store.create_pool_metadata(&ref_bytes, 1700000000 + i as i64).unwrap();
-        store.update_pool_metadata_status(&ref_bytes, "available").unwrap();
+        store
+            .create_pool_metadata(&ref_bytes, 1700000000 + i as i64)
+            .unwrap();
+        store
+            .update_pool_metadata_status(&ref_bytes, "available")
+            .unwrap();
     }
 
     // Create 1 key with 'reserved' status
     let reserved_ref = b"reserved_0";
-    store.create_pool_metadata(reserved_ref, 1700000000).unwrap();
-    store.update_pool_metadata_status(reserved_ref, "reserved").unwrap();
+    store
+        .create_pool_metadata(reserved_ref, 1700000000)
+        .unwrap();
+    store
+        .update_pool_metadata_status(reserved_ref, "reserved")
+        .unwrap();
 
     let available_metadata = store.get_metadata_by_status("available").unwrap();
     assert_eq!(available_metadata.len(), 2);
@@ -221,7 +246,9 @@ fn test_delete_pool_metadata() {
     let (store, _temp) = setup_store();
 
     let keypackage_ref = b"test_ref";
-    store.create_pool_metadata(keypackage_ref, 1700000000).unwrap();
+    store
+        .create_pool_metadata(keypackage_ref, 1700000000)
+        .unwrap();
 
     // Verify it exists
     let count_before = store.count_by_status("created").unwrap();
@@ -249,18 +276,17 @@ fn test_update_reservation_info() {
     let (store, _temp) = setup_store();
 
     let keypackage_ref = b"test_ref";
-    store.create_pool_metadata(keypackage_ref, 1700000000).unwrap();
+    store
+        .create_pool_metadata(keypackage_ref, 1700000000)
+        .unwrap();
 
     let reservation_id = "res_123";
     let reserved_by = "alice";
     let expires_at = 1700001000i64;
 
-    store.update_reservation_info(
-        keypackage_ref,
-        reservation_id,
-        reserved_by,
-        expires_at
-    ).unwrap();
+    store
+        .update_reservation_info(keypackage_ref, reservation_id, reserved_by, expires_at)
+        .unwrap();
 
     // Verify reservation info was stored
     let metadata = store.get_metadata_by_status("reserved").unwrap();
@@ -279,12 +305,16 @@ fn test_mark_spent() {
     let (store, _temp) = setup_store();
 
     let keypackage_ref = b"test_ref";
-    store.create_pool_metadata(keypackage_ref, 1700000000).unwrap();
+    store
+        .create_pool_metadata(keypackage_ref, 1700000000)
+        .unwrap();
 
     let spent_by = "bob";
     let group_id = b"group_abc123";
 
-    store.mark_spent(keypackage_ref, spent_by, group_id).unwrap();
+    store
+        .mark_spent(keypackage_ref, spent_by, group_id)
+        .unwrap();
 
     // Verify spend info was stored
     let metadata = store.get_metadata_by_status("spent").unwrap();
@@ -305,30 +335,35 @@ fn test_full_lifecycle() {
     let not_after = 1700000000i64;
 
     // 1. Create
-    store.create_pool_metadata(keypackage_ref, not_after).unwrap();
+    store
+        .create_pool_metadata(keypackage_ref, not_after)
+        .unwrap();
     assert_eq!(store.count_by_status("created").unwrap(), 1);
 
     // 2. Upload
-    store.update_pool_metadata_status(keypackage_ref, "uploaded").unwrap();
+    store
+        .update_pool_metadata_status(keypackage_ref, "uploaded")
+        .unwrap();
     assert_eq!(store.count_by_status("uploaded").unwrap(), 1);
     assert_eq!(store.count_by_status("created").unwrap(), 0);
 
     // 3. Make available
-    store.update_pool_metadata_status(keypackage_ref, "available").unwrap();
+    store
+        .update_pool_metadata_status(keypackage_ref, "available")
+        .unwrap();
     assert_eq!(store.count_by_status("available").unwrap(), 1);
 
     // 4. Reserve
-    store.update_reservation_info(
-        keypackage_ref,
-        "res_001",
-        "alice",
-        1700001000
-    ).unwrap();
+    store
+        .update_reservation_info(keypackage_ref, "res_001", "alice", 1700001000)
+        .unwrap();
     assert_eq!(store.count_by_status("reserved").unwrap(), 1);
     assert_eq!(store.count_by_status("available").unwrap(), 0);
 
     // 5. Spend
-    store.mark_spent(keypackage_ref, "bob", b"group_123").unwrap();
+    store
+        .mark_spent(keypackage_ref, "bob", b"group_123")
+        .unwrap();
     assert_eq!(store.count_by_status("spent").unwrap(), 1);
     assert_eq!(store.count_by_status("reserved").unwrap(), 0);
 
@@ -367,7 +402,9 @@ fn test_multiple_keys_different_states() {
         store.create_pool_metadata(ref_bytes, 1700000000).unwrap();
 
         if *final_status != "created" {
-            store.update_pool_metadata_status(ref_bytes, final_status).unwrap();
+            store
+                .update_pool_metadata_status(ref_bytes, final_status)
+                .unwrap();
         }
     }
 
@@ -384,7 +421,9 @@ fn test_timestamps_are_set() {
     let (store, _temp) = setup_store();
 
     let keypackage_ref = b"timestamp_test";
-    store.create_pool_metadata(keypackage_ref, 1700000000).unwrap();
+    store
+        .create_pool_metadata(keypackage_ref, 1700000000)
+        .unwrap();
 
     let metadata = store.get_metadata_by_status("created").unwrap();
     assert_eq!(metadata.len(), 1);
@@ -400,7 +439,9 @@ fn test_timestamps_are_set() {
     assert!(meta.spent_at.is_none());
 
     // Update to uploaded
-    store.update_pool_metadata_status(keypackage_ref, "uploaded").unwrap();
+    store
+        .update_pool_metadata_status(keypackage_ref, "uploaded")
+        .unwrap();
     let metadata = store.get_metadata_by_status("uploaded").unwrap();
     assert!(metadata[0].uploaded_at.is_some());
     assert!(metadata[0].uploaded_at.unwrap() >= meta.created_at);
@@ -439,7 +480,9 @@ fn test_unique_keypackage_refs() {
     let keypackage_ref = b"duplicate_ref";
 
     // Create first time
-    store.create_pool_metadata(keypackage_ref, 1700000000).unwrap();
+    store
+        .create_pool_metadata(keypackage_ref, 1700000000)
+        .unwrap();
 
     // Try to create again with same ref - should fail (PRIMARY KEY constraint)
     let result = store.create_pool_metadata(keypackage_ref, 1700000000);

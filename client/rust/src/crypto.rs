@@ -1,19 +1,21 @@
 //! MLS cryptographic operations using OpenMLS
 
-use crate::error::{Result, MlsError};
-use openmls::prelude::*;
+use crate::error::{MlsError, Result};
 use openmls::messages::group_info::GroupInfo;
-use openmls_rust_crypto::OpenMlsRustCrypto;
+use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
+use openmls_rust_crypto::OpenMlsRustCrypto;
 
 /// Generate a credential with key for a username
-pub fn generate_credential_with_key(username: &str) -> Result<(CredentialWithKey, SignatureKeyPair)> {
+pub fn generate_credential_with_key(
+    username: &str,
+) -> Result<(CredentialWithKey, SignatureKeyPair)> {
     let provider = &OpenMlsRustCrypto::default();
     let ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
-    
+
     // Create basic credential
     let credential = BasicCredential::new(username.as_bytes().to_vec());
-    
+
     // Generate signature key pair
     let signature_keys = SignatureKeyPair::new(ciphersuite.signature_algorithm())
         .map_err(|e| MlsError::OpenMls(e.to_string()))?;
@@ -22,32 +24,27 @@ pub fn generate_credential_with_key(username: &str) -> Result<(CredentialWithKey
     signature_keys
         .store(provider.storage())
         .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-     
+
     let credential_with_key = CredentialWithKey {
         credential: credential.into(),
         signature_key: signature_keys.to_public_vec().into(),
     };
-    
+
     Ok((credential_with_key, signature_keys))
 }
 
 /// Generate a key package bundle for the given credential and signature key
 pub fn generate_key_package_bundle(
-    credential: &CredentialWithKey, 
+    credential: &CredentialWithKey,
     signer: &SignatureKeyPair,
     provider: &impl OpenMlsProvider,
 ) -> Result<KeyPackageBundle> {
     let ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
-    
+
     let key_package = KeyPackage::builder()
-        .build(
-            ciphersuite,
-            provider,
-            signer,
-            credential.clone(),
-        )
+        .build(ciphersuite, provider, signer, credential.clone())
         .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-    
+
     Ok(key_package)
 }
 
@@ -60,7 +57,8 @@ pub fn create_group_with_config(
 ) -> Result<MlsGroup> {
     // Create group metadata extension (encrypted in group state)
     let metadata = crate::extensions::GroupMetadata::new(group_name.to_string());
-    let metadata_bytes = metadata.to_bytes()
+    let metadata_bytes = metadata
+        .to_bytes()
         .map_err(|e| MlsError::OpenMls(format!("Failed to serialize group metadata: {}", e)))?;
 
     let group_metadata_ext = Extensions::single(Extension::Unknown(
@@ -74,13 +72,8 @@ pub fn create_group_with_config(
         .map_err(|e| MlsError::OpenMls(e.to_string()))?
         .build();
 
-    let group = MlsGroup::new(
-        provider,
-        signer,
-        &group_config,
-        credential.clone(),
-    )
-    .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+    let group = MlsGroup::new(provider, signer, &group_config, credential.clone())
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
 
     Ok(group)
 }
@@ -92,13 +85,10 @@ pub fn create_application_message(
     signer: &SignatureKeyPair,
     plaintext: &[u8],
 ) -> Result<MlsMessageOut> {
-    let message = group.create_message(
-        provider,
-        signer,
-        plaintext,
-    )
-    .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-    
+    let message = group
+        .create_message(provider, signer, plaintext)
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+
     Ok(message)
 }
 
@@ -108,15 +98,15 @@ pub fn process_message(
     provider: &impl OpenMlsProvider,
     message: &MlsMessageIn,
 ) -> Result<ProcessedMessage> {
-    let protocol_message = message.clone().try_into_protocol_message()
+    let protocol_message = message
+        .clone()
+        .try_into_protocol_message()
         .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-    
-    let processed_message = group.process_message(
-        provider,
-        protocol_message,
-    )
-    .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-    
+
+    let processed_message = group
+        .process_message(provider, protocol_message)
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+
     Ok(processed_message)
 }
 
@@ -130,14 +120,11 @@ pub fn add_members(
 ) -> Result<(MlsMessageOut, MlsMessageOut, Option<GroupInfo>)> {
     // Convert &[&KeyPackage] to &[KeyPackage] by cloning
     let key_packages_owned: Vec<KeyPackage> = key_packages.iter().map(|kp| (*kp).clone()).collect();
-    
-    let (commit_message, welcome_message, group_info) = group.add_members(
-        provider,
-        signer,
-        &key_packages_owned,
-    )
-    .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-    
+
+    let (commit_message, welcome_message, group_info) = group
+        .add_members(provider, signer, &key_packages_owned)
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+
     Ok((commit_message, welcome_message, group_info))
 }
 
@@ -154,31 +141,25 @@ pub fn process_welcome_message(
         MlsMessageBodyIn::Welcome(w) => w,
         _ => return Err(MlsError::OpenMls("Expected Welcome message".to_string()).into()),
     };
-    
+
     // Create a staged join from the welcome message
-    let staged_join = StagedWelcome::new_from_welcome(
-        provider,
-        config,
-        welcome,
-        ratchet_tree,
-    )
-    .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-    
-    // Convert the staged join into a group
-    let group = staged_join.into_group(provider)
+    let staged_join = StagedWelcome::new_from_welcome(provider, config, welcome, ratchet_tree)
         .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-    
+
+    // Convert the staged join into a group
+    let group = staged_join
+        .into_group(provider)
+        .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+
     Ok(group)
 }
 
 /// Merge pending commit after adding members
-pub fn merge_pending_commit(
-    group: &mut MlsGroup,
-    provider: &impl OpenMlsProvider,
-) -> Result<()> {
-    group.merge_pending_commit(provider)
+pub fn merge_pending_commit(group: &mut MlsGroup, provider: &impl OpenMlsProvider) -> Result<()> {
+    group
+        .merge_pending_commit(provider)
         .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-    
+
     Ok(())
 }
 
@@ -211,7 +192,9 @@ pub fn load_group_from_storage(
 }
 
 /// Extract group metadata from group context extensions
-pub fn extract_group_metadata(group: &MlsGroup) -> Result<Option<crate::extensions::GroupMetadata>> {
+pub fn extract_group_metadata(
+    group: &MlsGroup,
+) -> Result<Option<crate::extensions::GroupMetadata>> {
     let extensions = group.extensions();
 
     if let Some(ext) = extensions.unknown(crate::extensions::GROUP_METADATA_EXTENSION_TYPE) {
@@ -261,7 +244,8 @@ mod tests {
 
         // Alice creates a group
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
+        let mut alice_group =
+            create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
 
         // Bob generates key package
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
@@ -289,8 +273,8 @@ mod tests {
 
         // Alice sends a message
         let plaintext = b"Hello from Alice!";
-        let encrypted = create_application_message(&mut alice_group, provider, &alice_key, plaintext)
-            .unwrap();
+        let encrypted =
+            create_application_message(&mut alice_group, provider, &alice_key, plaintext).unwrap();
 
         // Serialize the message for transport
         let serialized = encrypted.tls_serialize_detached().unwrap();
@@ -314,7 +298,8 @@ mod tests {
 
         // Alice creates group
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
+        let mut alice_group =
+            create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
 
         // Bob generates key package
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
@@ -338,9 +323,13 @@ mod tests {
         // Serialize and deserialize the welcome message to convert MlsMessageOut to MlsMessageIn
         let serialized = welcome_message.tls_serialize_detached().unwrap();
         let welcome_in = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
-        let bob_group = process_welcome_message(provider, &join_config, &welcome_in, ratchet_tree).unwrap();
+        let bob_group =
+            process_welcome_message(provider, &join_config, &welcome_in, ratchet_tree).unwrap();
 
-        assert_eq!(bob_group.group_id().as_slice(), alice_group.group_id().as_slice());
+        assert_eq!(
+            bob_group.group_id().as_slice(),
+            alice_group.group_id().as_slice()
+        );
     }
 
     #[test]
@@ -349,7 +338,8 @@ mod tests {
 
         // Alice creates group
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
+        let mut alice_group =
+            create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
 
         // Bob generates key package
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
@@ -372,11 +362,14 @@ mod tests {
         let join_config = MlsGroupJoinConfig::default();
         let serialized = welcome_message.tls_serialize_detached().unwrap();
         let welcome_in = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
-        let mut bob_group = process_welcome_message(provider, &join_config, &welcome_in, ratchet_tree).unwrap();
+        let mut bob_group =
+            process_welcome_message(provider, &join_config, &welcome_in, ratchet_tree).unwrap();
 
         // Alice sends a message
         let alice_message = b"Hello from Alice!";
-        let encrypted_alice = create_application_message(&mut alice_group, provider, &alice_key, alice_message).unwrap();
+        let encrypted_alice =
+            create_application_message(&mut alice_group, provider, &alice_key, alice_message)
+                .unwrap();
 
         // Bob processes Alice's message
         let serialized = encrypted_alice.tls_serialize_detached().unwrap();
@@ -398,14 +391,19 @@ mod tests {
 
         // Alice creates group
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group = create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
+        let mut alice_group =
+            create_group_with_config(&alice_cred, &alice_key, provider, "testgroup").unwrap();
 
         // Bob joins
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
         let bob_key_package = generate_key_package_bundle(&bob_cred, &bob_key, provider).unwrap();
-        let (_commit1, welcome_bob_message, _) =
-            add_members(&mut alice_group, provider, &alice_key, &[bob_key_package.key_package()])
-                .unwrap();
+        let (_commit1, welcome_bob_message, _) = add_members(
+            &mut alice_group,
+            provider,
+            &alice_key,
+            &[bob_key_package.key_package()],
+        )
+        .unwrap();
         merge_pending_commit(&mut alice_group, provider).unwrap();
 
         let ratchet_tree_bob = Some(export_ratchet_tree(&alice_group));
@@ -418,8 +416,8 @@ mod tests {
 
         // Bob sends a message to Alice (while they're both at epoch 1)
         let bob_message = b"Hello from Bob!";
-        let encrypted_bob = create_application_message(&mut bob_group, provider, &bob_key, bob_message)
-            .unwrap();
+        let encrypted_bob =
+            create_application_message(&mut bob_group, provider, &bob_key, bob_message).unwrap();
 
         // Alice processes Bob's message
         let serialized = encrypted_bob.tls_serialize_detached().unwrap();
@@ -436,28 +434,39 @@ mod tests {
 
         // Now Carol joins (Alice is at epoch 2, Bob is still at epoch 1)
         let (carol_cred, carol_key) = generate_credential_with_key("carol").unwrap();
-        let carol_key_package = generate_key_package_bundle(&carol_cred, &carol_key, provider).unwrap();
-        let (_commit2, welcome_carol_message, _) =
-            add_members(&mut alice_group, provider, &alice_key, &[carol_key_package.key_package()])
-                .unwrap();
+        let carol_key_package =
+            generate_key_package_bundle(&carol_cred, &carol_key, provider).unwrap();
+        let (_commit2, welcome_carol_message, _) = add_members(
+            &mut alice_group,
+            provider,
+            &alice_key,
+            &[carol_key_package.key_package()],
+        )
+        .unwrap();
         merge_pending_commit(&mut alice_group, provider).unwrap();
 
         let ratchet_tree_carol = Some(export_ratchet_tree(&alice_group));
         let serialized = welcome_carol_message.tls_serialize_detached().unwrap();
         let welcome_carol_in = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
-        let mut carol_group = process_welcome_message(provider, &join_config, &welcome_carol_in, ratchet_tree_carol)
-            .unwrap();
+        let mut carol_group = process_welcome_message(
+            provider,
+            &join_config,
+            &welcome_carol_in,
+            ratchet_tree_carol,
+        )
+        .unwrap();
 
         // Carol sends a message to Alice (who is at epoch 2)
         let carol_message = b"Hello from Carol!";
         let encrypted_carol =
-            create_application_message(&mut carol_group, provider, &carol_key, carol_message).unwrap();
+            create_application_message(&mut carol_group, provider, &carol_key, carol_message)
+                .unwrap();
 
         // Alice processes Carol's message
         let serialized = encrypted_carol.tls_serialize_detached().unwrap();
         let deserialized = MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
-        let processed_alice_from_carol = process_message(&mut alice_group, provider, &deserialized)
-            .unwrap();
+        let processed_alice_from_carol =
+            process_message(&mut alice_group, provider, &deserialized).unwrap();
 
         // Verify Alice received Carol's message
         match processed_alice_from_carol.content() {
@@ -470,8 +479,8 @@ mod tests {
 
     #[test]
     fn test_group_persistence_through_metadata() {
-        use tempfile::tempdir;
         use crate::provider::MlsProvider;
+        use tempfile::tempdir;
 
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("groups.db");
@@ -479,7 +488,8 @@ mod tests {
         // === Session 1: Create group and store metadata ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "testgroup").unwrap();
+        let alice_group_1 =
+            create_group_with_config(&alice_cred, &alice_key, &provider1, "testgroup").unwrap();
         let group_id = alice_group_1.group_id().as_slice().to_vec();
 
         // Store the group ID in metadata (simulating client storing group mapping)
@@ -498,16 +508,13 @@ mod tests {
         );
 
         let loaded_id = loaded_group_id.unwrap();
-        assert_eq!(
-            loaded_id, group_id,
-            "Loaded group ID should match original"
-        );
+        assert_eq!(loaded_id, group_id, "Loaded group ID should match original");
     }
 
     #[test]
     fn test_group_id_metadata_persists_with_member_addition() {
-        use tempfile::tempdir;
         use crate::provider::MlsProvider;
+        use tempfile::tempdir;
 
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("groups.db");
@@ -515,7 +522,8 @@ mod tests {
         // === Session 1: Create group and add Bob ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
+        let mut alice_group_1 =
+            create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
         let group_id = alice_group_1.group_id().as_slice().to_vec();
 
         // Bob generates his key package
@@ -551,8 +559,8 @@ mod tests {
 
     #[test]
     fn test_group_id_metadata_for_multiple_groups() {
-        use tempfile::tempdir;
         use crate::provider::MlsProvider;
+        use tempfile::tempdir;
 
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("groups.db");
@@ -561,9 +569,12 @@ mod tests {
 
         // Create and store first group
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let group1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group1").unwrap();
+        let group1 =
+            create_group_with_config(&alice_cred, &alice_key, &provider1, "group1").unwrap();
         let group1_id = group1.group_id().as_slice().to_vec();
-        provider1.save_group_name("alice:group1", &group1_id).unwrap();
+        provider1
+            .save_group_name("alice:group1", &group1_id)
+            .unwrap();
 
         // Create and store second group
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
@@ -577,14 +588,22 @@ mod tests {
         let loaded1 = provider2.load_group_by_name("alice:group1").unwrap();
         let loaded2 = provider2.load_group_by_name("bob:group2").unwrap();
 
-        assert_eq!(loaded1.unwrap(), group1_id, "Group 1 metadata should persist");
-        assert_eq!(loaded2.unwrap(), group2_id, "Group 2 metadata should persist");
+        assert_eq!(
+            loaded1.unwrap(),
+            group1_id,
+            "Group 1 metadata should persist"
+        );
+        assert_eq!(
+            loaded2.unwrap(),
+            group2_id,
+            "Group 2 metadata should persist"
+        );
     }
 
     #[test]
     fn test_group_metadata_persists_during_activity() {
-        use tempfile::tempdir;
         use crate::provider::MlsProvider;
+        use tempfile::tempdir;
 
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("groups.db");
@@ -592,15 +611,19 @@ mod tests {
         // === Session 1: Create group and perform messaging operations ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
+        let mut alice_group_1 =
+            create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
         let group_id_1 = alice_group_1.group_id().as_slice().to_vec();
 
         // Perform some group operations (send message)
         let msg = b"Hello from session 1";
-        let _encrypted = create_application_message(&mut alice_group_1, &provider1, &alice_key, msg).unwrap();
+        let _encrypted =
+            create_application_message(&mut alice_group_1, &provider1, &alice_key, msg).unwrap();
 
         // Store group ID mapping in metadata
-        provider1.save_group_name("alice:testgroup", &group_id_1).unwrap();
+        provider1
+            .save_group_name("alice:testgroup", &group_id_1)
+            .unwrap();
 
         // === Session 2: Verify metadata persists across sessions ===
         let provider2 = MlsProvider::new(&db_path).unwrap();
@@ -614,8 +637,7 @@ mod tests {
 
         let loaded_group_id = loaded_id.unwrap();
         assert_eq!(
-            loaded_group_id,
-            group_id_1,
+            loaded_group_id, group_id_1,
             "Loaded group ID from metadata should match original group ID"
         );
 
@@ -628,8 +650,8 @@ mod tests {
 
     #[test]
     fn test_load_group_from_storage_basic() {
-        use tempfile::tempdir;
         use crate::provider::MlsProvider;
+        use tempfile::tempdir;
 
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("groups.db");
@@ -637,12 +659,14 @@ mod tests {
         // === Session 1: Create group and persist state ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
+        let mut alice_group_1 =
+            create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
         let group_id = alice_group_1.group_id().clone();
 
         // Send a message to modify state
         let msg = b"First message";
-        let _encrypted_msg = create_application_message(&mut alice_group_1, &provider1, &alice_key, msg).unwrap();
+        let _encrypted_msg =
+            create_application_message(&mut alice_group_1, &provider1, &alice_key, msg).unwrap();
 
         let epoch_1 = alice_group_1.epoch();
 
@@ -671,8 +695,8 @@ mod tests {
 
     #[test]
     fn test_load_group_after_member_additions() {
-        use tempfile::tempdir;
         use crate::provider::MlsProvider;
+        use tempfile::tempdir;
 
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("groups.db");
@@ -680,18 +704,24 @@ mod tests {
         // === Session 1: Create group and add members ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
+        let mut alice_group_1 =
+            create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
         let group_id = alice_group_1.group_id().clone();
 
         // Initial state - just Alice
-        assert_eq!(alice_group_1.members().count(), 1, "Group should start with just Alice");
+        assert_eq!(
+            alice_group_1.members().count(),
+            1,
+            "Group should start with just Alice"
+        );
 
         // Generate key packages for Bob and Carol
         let (bob_cred, bob_key) = generate_credential_with_key("bob").unwrap();
         let bob_key_package = generate_key_package_bundle(&bob_cred, &bob_key, &provider1).unwrap();
 
         let (carol_cred, carol_key) = generate_credential_with_key("carol").unwrap();
-        let carol_key_package = generate_key_package_bundle(&carol_cred, &carol_key, &provider1).unwrap();
+        let carol_key_package =
+            generate_key_package_bundle(&carol_cred, &carol_key, &provider1).unwrap();
 
         // Add Bob
         let (_commit_bob, _welcome_bob, _) = add_members(
@@ -725,14 +755,22 @@ mod tests {
 
         // Verify group loaded correctly
         assert_eq!(alice_group_2.group_id(), &group_id, "Group ID should match");
-        assert_eq!(alice_group_2.epoch(), epoch_after_adds, "Epoch should reflect member additions");
-        assert_eq!(alice_group_2.members().count(), 3, "All members should be present after load");
+        assert_eq!(
+            alice_group_2.epoch(),
+            epoch_after_adds,
+            "Epoch should reflect member additions"
+        );
+        assert_eq!(
+            alice_group_2.members().count(),
+            3,
+            "All members should be present after load"
+        );
     }
 
     #[test]
     fn test_load_group_across_multiple_sessions() {
-        use tempfile::tempdir;
         use crate::provider::MlsProvider;
+        use tempfile::tempdir;
 
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("groups.db");
@@ -740,7 +778,8 @@ mod tests {
         // === Session 1: Create group and add member (epoch advances) ===
         let provider1 = MlsProvider::new(&db_path).unwrap();
         let (alice_cred, alice_key) = generate_credential_with_key("alice").unwrap();
-        let mut alice_group_1 = create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
+        let mut alice_group_1 =
+            create_group_with_config(&alice_cred, &alice_key, &provider1, "group").unwrap();
         let group_id = alice_group_1.group_id().clone();
         let epoch_initial = alice_group_1.epoch();
 
@@ -752,7 +791,8 @@ mod tests {
             &provider1,
             &alice_key,
             &[bob_key_package.key_package()],
-        ).unwrap();
+        )
+        .unwrap();
         merge_pending_commit(&mut alice_group_1, &provider1).unwrap();
         let epoch_1 = alice_group_1.epoch();
 
@@ -762,18 +802,27 @@ mod tests {
             .unwrap()
             .expect("Group should exist");
 
-        assert_eq!(alice_group_2.epoch(), epoch_1, "Session 2 should load at session 1 epoch");
-        assert!(epoch_1 > epoch_initial, "Epoch should have advanced after adding Bob");
+        assert_eq!(
+            alice_group_2.epoch(),
+            epoch_1,
+            "Session 2 should load at session 1 epoch"
+        );
+        assert!(
+            epoch_1 > epoch_initial,
+            "Epoch should have advanced after adding Bob"
+        );
 
         // Add Carol (epoch advances in session 2)
         let (carol_cred, carol_key) = generate_credential_with_key("carol").unwrap();
-        let carol_key_package = generate_key_package_bundle(&carol_cred, &carol_key, &provider2).unwrap();
+        let carol_key_package =
+            generate_key_package_bundle(&carol_cred, &carol_key, &provider2).unwrap();
         let (_commit, _welcome, _) = add_members(
             &mut alice_group_2,
             &provider2,
             &alice_key,
             &[carol_key_package.key_package()],
-        ).unwrap();
+        )
+        .unwrap();
         merge_pending_commit(&mut alice_group_2, &provider2).unwrap();
         let epoch_2 = alice_group_2.epoch();
 
@@ -784,8 +833,19 @@ mod tests {
             .expect("Group should exist");
 
         assert_eq!(alice_group_3.group_id(), &group_id, "Group ID persists");
-        assert_eq!(alice_group_3.epoch(), epoch_2, "Session 3 should load at session 2 epoch");
-        assert_eq!(alice_group_3.members().count(), 3, "All members should be present");
-        assert!(epoch_2 > epoch_1, "Epoch should advance with member addition in session 2");
+        assert_eq!(
+            alice_group_3.epoch(),
+            epoch_2,
+            "Session 3 should load at session 2 epoch"
+        );
+        assert_eq!(
+            alice_group_3.members().count(),
+            3,
+            "All members should be present"
+        );
+        assert!(
+            epoch_2 > epoch_1,
+            "Epoch should advance with member addition in session 2"
+        );
     }
 }

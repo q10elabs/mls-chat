@@ -166,8 +166,8 @@ mod tests {
     fn test_mls_user_creation() {
         // Generate identity material (same as in client.rs initialization)
         let username = "alice";
-        let (credential_with_key, signature_key) = crypto::generate_credential_with_key(username)
-            .expect("Failed to generate credential");
+        let (credential_with_key, signature_key) =
+            crypto::generate_credential_with_key(username).expect("Failed to generate credential");
 
         // Create identity metadata
         let keypair_blob = signature_key.to_public_vec();
@@ -200,8 +200,8 @@ mod tests {
     #[test]
     fn test_mls_user_getters() {
         let username = "bob";
-        let (credential_with_key, signature_key) = crypto::generate_credential_with_key(username)
-            .expect("Failed to generate credential");
+        let (credential_with_key, signature_key) =
+            crypto::generate_credential_with_key(username).expect("Failed to generate credential");
 
         // Store public key bytes for later comparison
         let public_key_bytes = signature_key.to_public_vec();
@@ -261,8 +261,8 @@ mod tests {
     #[test]
     fn test_signature_key_persistence() {
         let username = "carol";
-        let (credential_with_key, signature_key) = crypto::generate_credential_with_key(username)
-            .expect("Failed to generate credential");
+        let (credential_with_key, signature_key) =
+            crypto::generate_credential_with_key(username).expect("Failed to generate credential");
 
         // Store public key bytes before moving signature_key into MlsUser
         let original_public_bytes = signature_key.to_public_vec();
@@ -310,8 +310,8 @@ mod tests {
     #[test]
     fn test_mls_user_immutability() {
         let username = "dave";
-        let (credential_with_key, signature_key) = crypto::generate_credential_with_key(username)
-            .expect("Failed to generate credential");
+        let (credential_with_key, signature_key) =
+            crypto::generate_credential_with_key(username).expect("Failed to generate credential");
 
         let identity = Identity {
             username: username.to_string(),

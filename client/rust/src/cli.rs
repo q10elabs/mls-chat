@@ -3,9 +3,9 @@
 //! Provides command parsing and async stdin reading for concurrent I/O
 //! in the main message loop.
 
-use crate::models::Command;
-use crate::error::Result;
 use crate::client::MlsClient;
+use crate::error::Result;
+use crate::models::Command;
 use std::io::Write;
 use tokio::io::{AsyncBufReadExt, BufReader};
 

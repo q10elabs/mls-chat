@@ -3,7 +3,7 @@
 //! Handles persistent storage and recovery of user identities (credentials and signature keys)
 //! using the OpenMLS storage provider. Each username maintains a unique cryptographic identity.
 
-use crate::error::{Result, ClientError};
+use crate::error::{ClientError, Result};
 use crate::provider::MlsProvider;
 use crate::storage::LocalStore;
 use openmls::prelude::*;
@@ -50,39 +50,38 @@ impl IdentityManager {
         let ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 
         // Try to load existing identity from metadata store
-        let (credential_with_key, signature_key) =
-            match metadata_store.load_public_key(username)? {
-                Some(public_key_blob) => {
-                    // We have the public key stored - try to load the signature key from OpenMLS storage
-                    match SignatureKeyPair::read(
-                        provider.storage(),
-                        &public_key_blob,
-                        ciphersuite.signature_algorithm(),
-                    ) {
-                        Some(sig_key) => {
-                            // Successfully loaded existing signature key
-                            let credential = BasicCredential::new(username.as_bytes().to_vec());
-                            let credential_with_key = CredentialWithKey {
-                                credential: credential.into(),
-                                signature_key: sig_key.to_public_vec().into(),
-                            };
-                            (credential_with_key, sig_key)
-                        }
-                        None => {
-                            // Public key stored but not in OpenMLS storage - regenerate
-                            log::warn!(
+        let (credential_with_key, signature_key) = match metadata_store.load_public_key(username)? {
+            Some(public_key_blob) => {
+                // We have the public key stored - try to load the signature key from OpenMLS storage
+                match SignatureKeyPair::read(
+                    provider.storage(),
+                    &public_key_blob,
+                    ciphersuite.signature_algorithm(),
+                ) {
+                    Some(sig_key) => {
+                        // Successfully loaded existing signature key
+                        let credential = BasicCredential::new(username.as_bytes().to_vec());
+                        let credential_with_key = CredentialWithKey {
+                            credential: credential.into(),
+                            signature_key: sig_key.to_public_vec().into(),
+                        };
+                        (credential_with_key, sig_key)
+                    }
+                    None => {
+                        // Public key stored but not in OpenMLS storage - regenerate
+                        log::warn!(
                                 "Public key for {} found in metadata but not in OpenMLS storage. Regenerating.",
                                 username
                             );
-                            Self::create_new_identity(provider, metadata_store, username)?
-                        }
+                        Self::create_new_identity(provider, metadata_store, username)?
                     }
                 }
-                None => {
-                    // No identity stored - create new one
-                    Self::create_new_identity(provider, metadata_store, username)?
-                }
-            };
+            }
+            None => {
+                // No identity stored - create new one
+                Self::create_new_identity(provider, metadata_store, username)?
+            }
+        };
 
         Ok(StoredIdentity {
             username: username.to_string(),
@@ -171,7 +170,8 @@ mod tests {
         let provider = MlsProvider::new(&db_path).unwrap();
         let metadata_store = LocalStore::new(db_path.with_file_name("metadata.db")).unwrap();
 
-        let identity = IdentityManager::load_or_create(&provider, &metadata_store, "alice").unwrap();
+        let identity =
+            IdentityManager::load_or_create(&provider, &metadata_store, "alice").unwrap();
 
         assert_eq!(identity.username, "alice");
         assert!(!identity.signature_key.to_public_vec().is_empty());
@@ -225,10 +225,12 @@ mod tests {
         let provider = MlsProvider::new(&mls_db).unwrap();
         let metadata_store = LocalStore::new(&metadata_db).unwrap();
 
-        let identity = IdentityManager::load_or_create(&provider, &metadata_store, "carol").unwrap();
+        let identity =
+            IdentityManager::load_or_create(&provider, &metadata_store, "carol").unwrap();
 
         // Verify the identity is properly stored
-        let is_stored = IdentityManager::verify_stored(&provider, &metadata_store, &identity).unwrap();
+        let is_stored =
+            IdentityManager::verify_stored(&provider, &metadata_store, &identity).unwrap();
         assert!(is_stored, "Identity should be stored in provider");
     }
 
@@ -272,8 +274,16 @@ mod tests {
         let identity = IdentityManager::load_or_create(&provider, &metadata_store, "eve").unwrap();
 
         // Verify credential structure
-        let credential_bytes = identity.credential_with_key.credential.clone().tls_serialize_detached().unwrap();
-        assert!(!credential_bytes.is_empty(), "Credential should be serializable");
+        let credential_bytes = identity
+            .credential_with_key
+            .credential
+            .clone()
+            .tls_serialize_detached()
+            .unwrap();
+        assert!(
+            !credential_bytes.is_empty(),
+            "Credential should be serializable"
+        );
 
         // SignaturePublicKey is non-empty if it can be serialized
         let sig_key_bytes = identity
@@ -282,7 +292,10 @@ mod tests {
             .clone()
             .tls_serialize_detached()
             .unwrap();
-        assert!(!sig_key_bytes.is_empty(), "Signature key should be serializable and non-empty");
+        assert!(
+            !sig_key_bytes.is_empty(),
+            "Signature key should be serializable and non-empty"
+        );
     }
 
     #[test]
@@ -298,25 +311,33 @@ mod tests {
         let mut identities = Vec::new();
 
         for username in &users {
-            let identity = IdentityManager::load_or_create(&provider, &metadata_store, username).unwrap();
+            let identity =
+                IdentityManager::load_or_create(&provider, &metadata_store, username).unwrap();
             identities.push(identity);
         }
 
         // Verify all are different
-        let pubkeys: Vec<Vec<u8>> = identities.iter()
+        let pubkeys: Vec<Vec<u8>> = identities
+            .iter()
             .map(|id| id.signature_key.to_public_vec())
             .collect();
 
         for i in 0..pubkeys.len() {
             for j in (i + 1)..pubkeys.len() {
-                assert_ne!(pubkeys[i], pubkeys[j], "User {} and {} should have different keys", i, j);
+                assert_ne!(
+                    pubkeys[i], pubkeys[j],
+                    "User {} and {} should have different keys",
+                    i, j
+                );
             }
         }
 
         // Reload them and verify they're the same
         for username in users {
-            let reloaded = IdentityManager::load_or_create(&provider, &metadata_store, username).unwrap();
-            let original = identities.iter()
+            let reloaded =
+                IdentityManager::load_or_create(&provider, &metadata_store, username).unwrap();
+            let original = identities
+                .iter()
                 .find(|id| id.username == username)
                 .unwrap();
             assert_eq!(

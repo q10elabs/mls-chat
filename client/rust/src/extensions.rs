@@ -18,7 +18,6 @@ pub struct GroupMetadata {
 
     /// Version for detecting changes/rollbacks
     pub version: u32,
-
     // Future fields can be added here without breaking old clients
     // (clients will just ignore unknown fields during deserialization)
 }

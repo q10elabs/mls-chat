@@ -7,15 +7,15 @@
 /// complete client-server integration for the invitation protocol.
 use mls_chat_client::client::MlsClient;
 use mls_chat_client::models::MlsMessageEnvelope;
-use tempfile::tempdir;
 use std::time::Duration;
-use tls_codec::{Serialize, Deserialize};
+use tempfile::tempdir;
+use tls_codec::{Deserialize, Serialize};
 
 /// Test helper: Spawn a test server and return its address
 async fn spawn_test_server() -> (tokio::task::JoinHandle<()>, String) {
     // Create the server and get its actual address (which includes the dynamically assigned port)
-    let (server, addr) = mls_chat_server::server::create_test_http_server()
-        .expect("Failed to create test server");
+    let (server, addr) =
+        mls_chat_server::server::create_test_http_server().expect("Failed to create test server");
 
     log::info!("Test server listening on {}", addr);
 
@@ -48,25 +48,39 @@ async fn test_two_party_invitation_alice_invites_bob() {
     let temp_dir_bob = tempdir().expect("Failed to create temp dir");
 
     // Alice creates client and group
-    let mut alice = MlsClient::new_with_storage_path(&server_addr, "alice", "testgroup", temp_dir_alice.path())
-        .expect("Failed to create Alice's client");
+    let mut alice =
+        MlsClient::new_with_storage_path(&server_addr, "alice", "testgroup", temp_dir_alice.path())
+            .expect("Failed to create Alice's client");
 
     // Initialize Alice
-    alice.initialize().await.expect("Failed to initialize Alice");
-    alice.connect_to_group().await.expect("Failed to connect to group");
+    alice
+        .initialize()
+        .await
+        .expect("Failed to initialize Alice");
+    alice
+        .connect_to_group()
+        .await
+        .expect("Failed to connect to group");
 
     // Bob creates client
-    let mut bob = MlsClient::new_with_storage_path(&server_addr, "bob", "testgroup", temp_dir_bob.path())
-        .expect("Failed to create Bob's client");
+    let mut bob =
+        MlsClient::new_with_storage_path(&server_addr, "bob", "testgroup", temp_dir_bob.path())
+            .expect("Failed to create Bob's client");
 
     // Initialize Bob (registers KeyPackage with server)
     bob.initialize().await.expect("Failed to initialize Bob");
 
     // Alice invites Bob
-    alice.invite_user("bob").await.expect("Failed to invite Bob");
+    alice
+        .invite_user("bob")
+        .await
+        .expect("Failed to invite Bob");
 
     // Verify Alice is in the group
-    assert!(alice.is_group_connected(), "Alice should be connected to group");
+    assert!(
+        alice.is_group_connected(),
+        "Alice should be connected to group"
+    );
 
     // Verify both have identities initialized
     assert!(alice.get_identity().is_some(), "Alice should have identity");
@@ -92,18 +106,33 @@ fn test_welcome_message_envelope_structure() {
     let json = serde_json::to_string(&welcome_envelope).expect("Failed to serialize");
 
     // Verify type field
-    assert!(json.contains("\"type\":\"welcome\""), "Should have welcome type");
+    assert!(
+        json.contains("\"type\":\"welcome\""),
+        "Should have welcome type"
+    );
 
     // Verify required fields (NO group_id in WelcomeMessage)
     assert!(!json.contains("group_id"), "Should NOT have group_id field");
-    assert!(json.contains("\"inviter\":\"alice\""), "Should have inviter");
-    assert!(json.contains("\"welcome_blob\":"), "Should have welcome_blob");
-    assert!(json.contains("\"ratchet_tree_blob\":"), "Should have ratchet_tree_blob");
+    assert!(
+        json.contains("\"inviter\":\"alice\""),
+        "Should have inviter"
+    );
+    assert!(
+        json.contains("\"welcome_blob\":"),
+        "Should have welcome_blob"
+    );
+    assert!(
+        json.contains("\"ratchet_tree_blob\":"),
+        "Should have ratchet_tree_blob"
+    );
 
     // Deserialize back
-    let deserialized: MlsMessageEnvelope = serde_json::from_str(&json)
-        .expect("Failed to deserialize");
-    assert_eq!(welcome_envelope, deserialized, "Should deserialize correctly");
+    let deserialized: MlsMessageEnvelope =
+        serde_json::from_str(&json).expect("Failed to deserialize");
+    assert_eq!(
+        welcome_envelope, deserialized,
+        "Should deserialize correctly"
+    );
 }
 
 /// Test 3: Commit message envelope for membership changes
@@ -119,13 +148,19 @@ fn test_commit_message_envelope_structure() {
 
     let json = serde_json::to_string(&commit_envelope).expect("Failed to serialize");
 
-    assert!(json.contains("\"type\":\"commit\""), "Should have commit type");
+    assert!(
+        json.contains("\"type\":\"commit\""),
+        "Should have commit type"
+    );
     assert!(json.contains("\"sender\":\"alice\""), "Should have sender");
     assert!(json.contains("\"commit_blob\":"), "Should have commit_blob");
 
-    let deserialized: MlsMessageEnvelope = serde_json::from_str(&json)
-        .expect("Failed to deserialize");
-    assert_eq!(commit_envelope, deserialized, "Should deserialize correctly");
+    let deserialized: MlsMessageEnvelope =
+        serde_json::from_str(&json).expect("Failed to deserialize");
+    assert_eq!(
+        commit_envelope, deserialized,
+        "Should deserialize correctly"
+    );
 }
 
 /// Test 4: Alice invites Bob, then Bob invites Carol (three-party)
@@ -145,23 +180,32 @@ async fn test_three_party_invitation_sequence() {
     let temp_dir_carol = tempdir().expect("Failed to create temp dir");
 
     // Alice creates and initializes
-    let mut alice = MlsClient::new_with_storage_path(&server_addr, "alice", "groupabc", temp_dir_alice.path())
-        .expect("Failed to create Alice");
+    let mut alice =
+        MlsClient::new_with_storage_path(&server_addr, "alice", "groupabc", temp_dir_alice.path())
+            .expect("Failed to create Alice");
     alice.initialize().await.expect("Failed to init Alice");
-    alice.connect_to_group().await.expect("Failed to connect Alice");
+    alice
+        .connect_to_group()
+        .await
+        .expect("Failed to connect Alice");
 
     // Bob initializes
-    let mut bob = MlsClient::new_with_storage_path(&server_addr, "bob", "groupabc", temp_dir_bob.path())
-        .expect("Failed to create Bob");
+    let mut bob =
+        MlsClient::new_with_storage_path(&server_addr, "bob", "groupabc", temp_dir_bob.path())
+            .expect("Failed to create Bob");
     bob.initialize().await.expect("Failed to init Bob");
 
     // Carol initializes
-    let mut carol = MlsClient::new_with_storage_path(&server_addr, "carol", "groupabc", temp_dir_carol.path())
-        .expect("Failed to create Carol");
+    let mut carol =
+        MlsClient::new_with_storage_path(&server_addr, "carol", "groupabc", temp_dir_carol.path())
+            .expect("Failed to create Carol");
     carol.initialize().await.expect("Failed to init Carol");
 
     // Alice invites Bob
-    alice.invite_user("bob").await.expect("Failed to invite Bob");
+    alice
+        .invite_user("bob")
+        .await
+        .expect("Failed to invite Bob");
 
     // Verify Alice can invite
     assert!(alice.is_group_connected(), "Alice should be in group");
@@ -190,8 +234,8 @@ fn test_application_message_envelope_structure() {
     assert!(json.contains("\"sender\":\"alice\""));
     assert!(json.contains("\"group_id\":\"testgroup\""));
 
-    let deserialized: MlsMessageEnvelope = serde_json::from_str(&json)
-        .expect("Failed to deserialize");
+    let deserialized: MlsMessageEnvelope =
+        serde_json::from_str(&json).expect("Failed to deserialize");
     assert_eq!(app_envelope, deserialized);
 }
 
@@ -201,14 +245,23 @@ fn test_application_message_envelope_structure() {
 #[test]
 fn test_envelope_message_type_routing() {
     let messages = vec![
-        (r#"{"type":"application","sender":"alice","group_id":"g1","encrypted_content":"data"}"#, "application"),
-        (r#"{"type":"welcome","inviter":"alice","invitee":"bob","welcome_blob":"w","ratchet_tree_blob":"rt"}"#, "welcome"),
-        (r#"{"type":"commit","group_id":"g1","sender":"alice","commit_blob":"c"}"#, "commit"),
+        (
+            r#"{"type":"application","sender":"alice","group_id":"g1","encrypted_content":"data"}"#,
+            "application",
+        ),
+        (
+            r#"{"type":"welcome","inviter":"alice","invitee":"bob","welcome_blob":"w","ratchet_tree_blob":"rt"}"#,
+            "welcome",
+        ),
+        (
+            r#"{"type":"commit","group_id":"g1","sender":"alice","commit_blob":"c"}"#,
+            "commit",
+        ),
     ];
 
     for (msg, expected_type) in messages {
-        let envelope: MlsMessageEnvelope = serde_json::from_str(msg)
-            .unwrap_or_else(|_| panic!("Failed to parse: {}", msg));
+        let envelope: MlsMessageEnvelope =
+            serde_json::from_str(msg).unwrap_or_else(|_| panic!("Failed to parse: {}", msg));
 
         // Verify each type is correctly identified
         match (envelope, expected_type) {
@@ -236,8 +289,9 @@ async fn test_multiple_sequential_invitations() {
 
     let temp_dir_alice = tempdir().expect("Failed to create temp dir");
 
-    let mut alice = MlsClient::new_with_storage_path(&server_addr, "alice", "big-group", temp_dir_alice.path())
-        .expect("Failed to create Alice");
+    let mut alice =
+        MlsClient::new_with_storage_path(&server_addr, "alice", "big-group", temp_dir_alice.path())
+            .expect("Failed to create Alice");
     alice.initialize().await.expect("Failed to init");
     alice.connect_to_group().await.expect("Failed to connect");
 
@@ -246,8 +300,9 @@ async fn test_multiple_sequential_invitations() {
     let mut user_clients = Vec::new();
     for user in &users {
         let temp_dir = tempdir().expect("Failed to create temp dir");
-        let mut client = MlsClient::new_with_storage_path(&server_addr, user, "big-group", temp_dir.path())
-            .unwrap_or_else(|_| panic!("Failed to create {}", user));
+        let mut client =
+            MlsClient::new_with_storage_path(&server_addr, user, "big-group", temp_dir.path())
+                .unwrap_or_else(|_| panic!("Failed to create {}", user));
         client
             .initialize()
             .await
@@ -266,7 +321,10 @@ async fn test_multiple_sequential_invitations() {
     }
 
     // Verify Alice is still connected
-    assert!(alice.is_group_connected(), "Alice should still be connected after invitations");
+    assert!(
+        alice.is_group_connected(),
+        "Alice should still be connected after invitations"
+    );
 }
 
 /// Test 8: Invitation with proper error handling
@@ -279,8 +337,9 @@ async fn test_invitation_to_nonexistent_user_fails() {
 
     let temp_dir_alice = tempdir().expect("Failed to create temp dir");
 
-    let mut alice = MlsClient::new_with_storage_path(&server_addr, "alice", "testgroup", temp_dir_alice.path())
-        .expect("Failed to create Alice");
+    let mut alice =
+        MlsClient::new_with_storage_path(&server_addr, "alice", "testgroup", temp_dir_alice.path())
+            .expect("Failed to create Alice");
     alice.initialize().await.expect("Failed to init");
     alice.connect_to_group().await.expect("Failed to connect");
 
@@ -353,15 +412,27 @@ fn test_commit_message_broadcast() {
 #[test]
 fn test_list_members_no_group() {
     let temp_dir = tempdir().expect("Failed to create temp dir");
-    let client = MlsClient::new_with_storage_path("http://localhost:4000", "alice", "testgroup", temp_dir.path())
-        .expect("Failed to create client");
+    let client = MlsClient::new_with_storage_path(
+        "http://localhost:4000",
+        "alice",
+        "testgroup",
+        temp_dir.path(),
+    )
+    .expect("Failed to create client");
 
     // No group is connected yet
-    assert!(!client.is_group_connected(), "Client should not be connected");
+    assert!(
+        !client.is_group_connected(),
+        "Client should not be connected"
+    );
 
     // list_members should return empty, not panic
     let members: Vec<String> = client.list_members();
-    assert_eq!(members, vec![] as Vec<String>, "Should return empty list when no group connected");
+    assert_eq!(
+        members,
+        vec![] as Vec<String>,
+        "Should return empty list when no group connected"
+    );
 }
 
 /// Test 12: list_members() returns single member (creator)
@@ -379,22 +450,23 @@ fn test_list_members_creator_only() {
 
     // Create group as Alice
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+    let alice_group =
+        crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
     // Extract members from group
     let members: Vec<String> = alice_group
         .members()
-        .filter_map(|member| {
-            match member.credential.credential_type() {
-                openmls::prelude::CredentialType::Basic => {
-                    if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
-                        String::from_utf8(basic_cred.identity().to_vec()).ok()
-                    } else {
-                        None
-                    }
+        .filter_map(|member| match member.credential.credential_type() {
+            openmls::prelude::CredentialType::Basic => {
+                if let Ok(basic_cred) =
+                    openmls::prelude::BasicCredential::try_from(member.credential.clone())
+                {
+                    String::from_utf8(basic_cred.identity().to_vec()).ok()
+                } else {
+                    None
                 }
-                _ => None,
             }
+            _ => None,
         })
         .collect();
 
@@ -418,29 +490,31 @@ async fn test_list_members_after_invitation() {
 
     // === Alice creates group ===
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+    let mut alice_group =
+        crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
     // Verify Alice is the only member initially
     let initial_members: Vec<String> = alice_group
         .members()
-        .filter_map(|member| {
-            match member.credential.credential_type() {
-                openmls::prelude::CredentialType::Basic => {
-                    if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
-                        String::from_utf8(basic_cred.identity().to_vec()).ok()
-                    } else {
-                        None
-                    }
+        .filter_map(|member| match member.credential.credential_type() {
+            openmls::prelude::CredentialType::Basic => {
+                if let Ok(basic_cred) =
+                    openmls::prelude::BasicCredential::try_from(member.credential.clone())
+                {
+                    String::from_utf8(basic_cred.identity().to_vec()).ok()
+                } else {
+                    None
                 }
-                _ => None,
             }
+            _ => None,
         })
         .collect();
     assert_eq!(initial_members, vec!["alice"], "Initially only alice");
 
     // === Bob generates key package and gets invited ===
     let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
-    let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
+    let bob_key_package =
+        crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
 
     // Alice adds Bob to the group
     let (_commit_msg, welcome_msg, _group_info) = crypto::add_members(
@@ -448,7 +522,8 @@ async fn test_list_members_after_invitation() {
         &provider,
         &alice_key,
         &[bob_key_package.key_package()],
-    ).unwrap();
+    )
+    .unwrap();
 
     // Merge the pending commit
     crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
@@ -456,52 +531,71 @@ async fn test_list_members_after_invitation() {
     // After adding Bob, Alice's group should show two members
     let alice_members_after_invite: Vec<String> = alice_group
         .members()
-        .filter_map(|member| {
-            match member.credential.credential_type() {
-                openmls::prelude::CredentialType::Basic => {
-                    if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
-                        String::from_utf8(basic_cred.identity().to_vec()).ok()
-                    } else {
-                        None
-                    }
+        .filter_map(|member| match member.credential.credential_type() {
+            openmls::prelude::CredentialType::Basic => {
+                if let Ok(basic_cred) =
+                    openmls::prelude::BasicCredential::try_from(member.credential.clone())
+                {
+                    String::from_utf8(basic_cred.identity().to_vec()).ok()
+                } else {
+                    None
                 }
-                _ => None,
             }
+            _ => None,
         })
         .collect();
 
     // Check Alice has both members
-    assert_eq!(alice_members_after_invite.len(), 2, "Should have 2 members after invite");
-    assert!(alice_members_after_invite.contains(&"alice".to_string()), "Alice should be member");
-    assert!(alice_members_after_invite.contains(&"bob".to_string()), "Bob should be member");
+    assert_eq!(
+        alice_members_after_invite.len(),
+        2,
+        "Should have 2 members after invite"
+    );
+    assert!(
+        alice_members_after_invite.contains(&"alice".to_string()),
+        "Alice should be member"
+    );
+    assert!(
+        alice_members_after_invite.contains(&"bob".to_string()),
+        "Bob should be member"
+    );
 
     // === Bob processes Welcome and joins ===
     let ratchet_tree = Some(crypto::export_ratchet_tree(&alice_group));
     let join_config = openmls::prelude::MlsGroupJoinConfig::default();
     let serialized = welcome_msg.tls_serialize_detached().unwrap();
-    let welcome_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
-    let bob_group = crypto::process_welcome_message(&provider, &join_config, &welcome_in, ratchet_tree).unwrap();
+    let welcome_in =
+        openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized.as_slice()).unwrap();
+    let bob_group =
+        crypto::process_welcome_message(&provider, &join_config, &welcome_in, ratchet_tree)
+            .unwrap();
 
     // Bob's group should also show two members
     let bob_members: Vec<String> = bob_group
         .members()
-        .filter_map(|member| {
-            match member.credential.credential_type() {
-                openmls::prelude::CredentialType::Basic => {
-                    if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
-                        String::from_utf8(basic_cred.identity().to_vec()).ok()
-                    } else {
-                        None
-                    }
+        .filter_map(|member| match member.credential.credential_type() {
+            openmls::prelude::CredentialType::Basic => {
+                if let Ok(basic_cred) =
+                    openmls::prelude::BasicCredential::try_from(member.credential.clone())
+                {
+                    String::from_utf8(basic_cred.identity().to_vec()).ok()
+                } else {
+                    None
                 }
-                _ => None,
             }
+            _ => None,
         })
         .collect();
 
     assert_eq!(bob_members.len(), 2, "Bob's group should have 2 members");
-    assert!(bob_members.contains(&"alice".to_string()), "Alice should be member");
-    assert!(bob_members.contains(&"bob".to_string()), "Bob should be member");
+    assert!(
+        bob_members.contains(&"alice".to_string()),
+        "Alice should be member"
+    );
+    assert!(
+        bob_members.contains(&"bob".to_string()),
+        "Bob should be member"
+    );
 }
 
 /// Test 14: list_members() with three-party group
@@ -538,17 +632,20 @@ async fn test_list_members_three_party_group() {
 
     // === Alice creates group ===
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+    let mut alice_group =
+        crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
     // === Step 1: Alice invites Bob ===
     let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
-    let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
+    let bob_key_package =
+        crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
     let (_commit_1, welcome_1, _) = crypto::add_members(
         &mut alice_group,
         &provider,
         &alice_key,
         &[bob_key_package.key_package()],
-    ).unwrap();
+    )
+    .unwrap();
     crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
 
     // Bob joins via Welcome - this puts Bob into the same epoch as Alice (E+1)
@@ -556,20 +653,25 @@ async fn test_list_members_three_party_group() {
     let ratchet_tree_1 = Some(crypto::export_ratchet_tree(&alice_group));
     let join_config = openmls::prelude::MlsGroupJoinConfig::default();
     let serialized_1 = welcome_1.tls_serialize_detached().unwrap();
-    let welcome_1_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_1.as_slice()).unwrap();
-    let mut bob_group = crypto::process_welcome_message(&provider, &join_config, &welcome_1_in, ratchet_tree_1).unwrap();
+    let welcome_1_in =
+        openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_1.as_slice()).unwrap();
+    let mut bob_group =
+        crypto::process_welcome_message(&provider, &join_config, &welcome_1_in, ratchet_tree_1)
+            .unwrap();
 
     // Note: Bob is now at epoch E+1 after processing Welcome: [Alice, Bob]
 
     // === Step 2: Alice invites Carol ===
     let (carol_cred, carol_key) = crypto::generate_credential_with_key("carol").unwrap();
-    let carol_key_package = crypto::generate_key_package_bundle(&carol_cred, &carol_key, &provider).unwrap();
+    let carol_key_package =
+        crypto::generate_key_package_bundle(&carol_cred, &carol_key, &provider).unwrap();
     let (commit_2, welcome_2, _) = crypto::add_members(
         &mut alice_group,
         &provider,
         &alice_key,
         &[carol_key_package.key_package()],
-    ).unwrap();
+    )
+    .unwrap();
     crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
 
     // === Bob receives commit_2 ===
@@ -577,15 +679,21 @@ async fn test_list_members_three_party_group() {
     // "everyone learns about new members from the Commit that adds them—not from the Welcome"
     // Bob must process the Commit that Alice created to discover Carol and move to epoch E+2
     let serialized_commit_2 = commit_2.tls_serialize_detached().unwrap();
-    let commit_2_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_commit_2.as_slice()).unwrap();
+    let commit_2_in =
+        openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_commit_2.as_slice())
+            .unwrap();
     let protocol_msg_2 = commit_2_in.try_into_protocol_message().unwrap();
-    let processed_commit_2 = bob_group.process_message(&provider, protocol_msg_2).unwrap();
+    let processed_commit_2 = bob_group
+        .process_message(&provider, protocol_msg_2)
+        .unwrap();
 
     // Extract and merge the staged commit - this advances Bob to epoch E+2
     if let openmls::prelude::ProcessedMessageContent::StagedCommitMessage(staged_commit_2) =
         processed_commit_2.into_content()
     {
-        bob_group.merge_staged_commit(&provider, *staged_commit_2).unwrap();
+        bob_group
+            .merge_staged_commit(&provider, *staged_commit_2)
+            .unwrap();
     } else {
         panic!("Expected StagedCommitMessage from Commit#2");
     }
@@ -595,8 +703,11 @@ async fn test_list_members_three_party_group() {
     // The Welcome message at this point includes the full group state at epoch E+2 (after commit_2)
     let ratchet_tree_2 = Some(crypto::export_ratchet_tree(&alice_group));
     let serialized_2 = welcome_2.tls_serialize_detached().unwrap();
-    let welcome_2_in = openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_2.as_slice()).unwrap();
-    let carol_group = crypto::process_welcome_message(&provider, &join_config, &welcome_2_in, ratchet_tree_2).unwrap();
+    let welcome_2_in =
+        openmls::prelude::MlsMessageIn::tls_deserialize(&mut serialized_2.as_slice()).unwrap();
+    let carol_group =
+        crypto::process_welcome_message(&provider, &join_config, &welcome_2_in, ratchet_tree_2)
+            .unwrap();
 
     // After Carol processes the Welcome, she's at epoch E+2 and knows about Alice, Bob, and herself
     // (because the Welcome was created after commit_2 which added her alongside knowledge of Bob)
@@ -607,17 +718,17 @@ async fn test_list_members_three_party_group() {
     let extract_members = |group: &openmls::prelude::MlsGroup| -> Vec<String> {
         group
             .members()
-            .filter_map(|member| {
-                match member.credential.credential_type() {
-                    openmls::prelude::CredentialType::Basic => {
-                        if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
-                            String::from_utf8(basic_cred.identity().to_vec()).ok()
-                        } else {
-                            None
-                        }
+            .filter_map(|member| match member.credential.credential_type() {
+                openmls::prelude::CredentialType::Basic => {
+                    if let Ok(basic_cred) =
+                        openmls::prelude::BasicCredential::try_from(member.credential.clone())
+                    {
+                        String::from_utf8(basic_cred.identity().to_vec()).ok()
+                    } else {
+                        None
                     }
-                    _ => None,
                 }
+                _ => None,
             })
             .collect()
     };
@@ -630,26 +741,61 @@ async fn test_list_members_three_party_group() {
 
     // === Alice's view ===
     // Alice is the inviter - she created both commits and knows about everyone
-    assert_eq!(alice_members.len(), 3, "Alice should have 3 members (she created and invited them)");
-    assert!(alice_members.contains(&"alice".to_string()), "Alice should be member");
-    assert!(alice_members.contains(&"bob".to_string()), "Alice should know about Bob (invited in epoch E+1)");
-    assert!(alice_members.contains(&"carol".to_string()), "Alice should know about Carol (invited in epoch E+2)");
+    assert_eq!(
+        alice_members.len(),
+        3,
+        "Alice should have 3 members (she created and invited them)"
+    );
+    assert!(
+        alice_members.contains(&"alice".to_string()),
+        "Alice should be member"
+    );
+    assert!(
+        alice_members.contains(&"bob".to_string()),
+        "Alice should know about Bob (invited in epoch E+1)"
+    );
+    assert!(
+        alice_members.contains(&"carol".to_string()),
+        "Alice should know about Carol (invited in epoch E+2)"
+    );
 
     // === Bob's view ===
     // Should know about all 3 members.
     assert_eq!(bob_members.len(), 3, "Bob should have 3 members");
-    assert!(bob_members.contains(&"alice".to_string()), "Bob knows Alice (from Welcome)");
-    assert!(bob_members.contains(&"bob".to_string()), "Bob knows himself (from Welcome)");
-    assert!(bob_members.contains(&"carol".to_string()), "Bob knows Carol (from commit2)");
+    assert!(
+        bob_members.contains(&"alice".to_string()),
+        "Bob knows Alice (from Welcome)"
+    );
+    assert!(
+        bob_members.contains(&"bob".to_string()),
+        "Bob knows himself (from Welcome)"
+    );
+    assert!(
+        bob_members.contains(&"carol".to_string()),
+        "Bob knows Carol (from commit2)"
+    );
 
     // === Carol's view ===
     // Carol joined at epoch E+2 via Welcome created AFTER commit_2
     // The Welcome at epoch E+2 contains the full roster: [Alice, Bob, Carol]
     // So Carol sees all three members
-    assert_eq!(carol_members.len(), 3, "Carol should have 3 members (Welcome created at epoch E+2 includes full roster)");
-    assert!(carol_members.contains(&"alice".to_string()), "Carol knows Alice (from Welcome at epoch E+2)");
-    assert!(carol_members.contains(&"bob".to_string()), "Carol knows Bob (from Welcome at epoch E+2)");
-    assert!(carol_members.contains(&"carol".to_string()), "Carol knows herself (from Welcome)");
+    assert_eq!(
+        carol_members.len(),
+        3,
+        "Carol should have 3 members (Welcome created at epoch E+2 includes full roster)"
+    );
+    assert!(
+        carol_members.contains(&"alice".to_string()),
+        "Carol knows Alice (from Welcome at epoch E+2)"
+    );
+    assert!(
+        carol_members.contains(&"bob".to_string()),
+        "Carol knows Bob (from Welcome at epoch E+2)"
+    );
+    assert!(
+        carol_members.contains(&"carol".to_string()),
+        "Carol knows herself (from Welcome)"
+    );
 }
 
 /// Test 15: list_members() preserves member order
@@ -666,28 +812,36 @@ async fn test_list_members_consistency() {
 
     // Create group and add members
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+    let mut alice_group =
+        crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
     let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
-    let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
-    crypto::add_members(&mut alice_group, &provider, &alice_key, &[bob_key_package.key_package()]).unwrap();
+    let bob_key_package =
+        crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
+    crypto::add_members(
+        &mut alice_group,
+        &provider,
+        &alice_key,
+        &[bob_key_package.key_package()],
+    )
+    .unwrap();
     crypto::merge_pending_commit(&mut alice_group, &provider).unwrap();
 
     // Call list_members multiple times and verify consistency
     let extract_members = |group: &openmls::prelude::MlsGroup| -> Vec<String> {
         group
             .members()
-            .filter_map(|member| {
-                match member.credential.credential_type() {
-                    openmls::prelude::CredentialType::Basic => {
-                        if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
-                            String::from_utf8(basic_cred.identity().to_vec()).ok()
-                        } else {
-                            None
-                        }
+            .filter_map(|member| match member.credential.credential_type() {
+                openmls::prelude::CredentialType::Basic => {
+                    if let Ok(basic_cred) =
+                        openmls::prelude::BasicCredential::try_from(member.credential.clone())
+                    {
+                        String::from_utf8(basic_cred.identity().to_vec()).ok()
+                    } else {
+                        None
                     }
-                    _ => None,
                 }
+                _ => None,
             })
             .collect()
     };
@@ -697,8 +851,14 @@ async fn test_list_members_consistency() {
     let members_third_call = extract_members(&alice_group);
 
     // All calls should return the same members
-    assert_eq!(members_first_call, members_second_call, "Member list should be consistent");
-    assert_eq!(members_second_call, members_third_call, "Member list should remain consistent");
+    assert_eq!(
+        members_first_call, members_second_call,
+        "Member list should be consistent"
+    );
+    assert_eq!(
+        members_second_call, members_third_call,
+        "Member list should remain consistent"
+    );
     assert_eq!(members_first_call.len(), 2, "Should have 2 members");
 }
 
@@ -708,11 +868,19 @@ async fn test_list_members_consistency() {
 #[test]
 fn test_invite_requires_group_connection() {
     let temp_dir = tempdir().expect("Failed to create temp dir");
-    let client = MlsClient::new_with_storage_path("http://localhost:4000", "alice", "testgroup", temp_dir.path())
-        .expect("Failed to create client");
+    let client = MlsClient::new_with_storage_path(
+        "http://localhost:4000",
+        "alice",
+        "testgroup",
+        temp_dir.path(),
+    )
+    .expect("Failed to create client");
 
     // Client is not connected to group - can't determine if we have permission to invite
-    assert!(!client.is_group_connected(), "Client should not be connected");
+    assert!(
+        !client.is_group_connected(),
+        "Client should not be connected"
+    );
     // Note: invite_user() is async and requires server, so we just verify state here
 }
 
@@ -730,29 +898,37 @@ async fn test_list_members_after_commit() {
 
     // Create group
     let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
-    let mut alice_group = crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
+    let mut alice_group =
+        crypto::create_group_with_config(&alice_cred, &alice_key, &provider, "testgroup").unwrap();
 
     let members_before: Vec<String> = alice_group
         .members()
-        .filter_map(|member| {
-            match member.credential.credential_type() {
-                openmls::prelude::CredentialType::Basic => {
-                    if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
-                        String::from_utf8(basic_cred.identity().to_vec()).ok()
-                    } else {
-                        None
-                    }
+        .filter_map(|member| match member.credential.credential_type() {
+            openmls::prelude::CredentialType::Basic => {
+                if let Ok(basic_cred) =
+                    openmls::prelude::BasicCredential::try_from(member.credential.clone())
+                {
+                    String::from_utf8(basic_cred.identity().to_vec()).ok()
+                } else {
+                    None
                 }
-                _ => None,
             }
+            _ => None,
         })
         .collect();
     assert_eq!(members_before, vec!["alice"]);
 
     // Invite Bob
     let (bob_cred, bob_key) = crypto::generate_credential_with_key("bob").unwrap();
-    let bob_key_package = crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
-    crypto::add_members(&mut alice_group, &provider, &alice_key, &[bob_key_package.key_package()]).unwrap();
+    let bob_key_package =
+        crypto::generate_key_package_bundle(&bob_cred, &bob_key, &provider).unwrap();
+    crypto::add_members(
+        &mut alice_group,
+        &provider,
+        &alice_key,
+        &[bob_key_package.key_package()],
+    )
+    .unwrap();
 
     // After add_members (before merge), Alice's group state shows pending commit
     // Merge to finalize
@@ -760,17 +936,17 @@ async fn test_list_members_after_commit() {
 
     let members_after: Vec<String> = alice_group
         .members()
-        .filter_map(|member| {
-            match member.credential.credential_type() {
-                openmls::prelude::CredentialType::Basic => {
-                    if let Ok(basic_cred) = openmls::prelude::BasicCredential::try_from(member.credential.clone()) {
-                        String::from_utf8(basic_cred.identity().to_vec()).ok()
-                    } else {
-                        None
-                    }
+        .filter_map(|member| match member.credential.credential_type() {
+            openmls::prelude::CredentialType::Basic => {
+                if let Ok(basic_cred) =
+                    openmls::prelude::BasicCredential::try_from(member.credential.clone())
+                {
+                    String::from_utf8(basic_cred.identity().to_vec()).ok()
+                } else {
+                    None
                 }
-                _ => None,
             }
+            _ => None,
         })
         .collect();
 

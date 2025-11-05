@@ -5,11 +5,13 @@
 //! - `membership`: Group session state and operations
 //! - `connection`: Infrastructure and message routing
 
-pub mod user;
-pub mod membership;
 pub mod connection;
+pub mod keypackage_pool;
+pub mod membership;
+pub mod user;
 
 // Re-export for convenience
-pub use user::MlsUser;
-pub use membership::MlsMembership;
 pub use connection::MlsConnection;
+pub use keypackage_pool::{KeyPackagePool, KeyPackagePoolConfig};
+pub use membership::MlsMembership;
+pub use user::MlsUser;
