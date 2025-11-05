@@ -85,56 +85,6 @@ Before making any code changes other than the changelog, you must follow this tw
 5. User: "Yes, that looks good"
 6. Assistant: [proceeds with implementation]
 
-## Code organization for the `quint-app` directory
-
-- Data model (entities only) in `src/db/models`
-- Service layer is split into: stores (`src/db/stores`, data persistence), business logic (`src/db/services`: `core`, `workflow`, `actions`), and presentation (`src/db/presentation`, UI-specific services).
-- Stores: Only handle raw data persistence/retrieval, no business logic, direct DB/storage access, simple accessors return undefined/empty, "must" accessors throw on missing.
-- Core services: Implement business rules/constraints, handle auth/validation, coordinate stores, use exceptions for errors.
-- Workflow services: Manage process flows/state transitions, coordinate operations, handle bootstrapping/init, use exceptions for errors.
-- Action services: Handle user actions/events, manage action-specific business logic.
-- Presentation services: Transform data for UI, handle UI-specific state/logic, no business rules, no direct store access, translate exceptions to Result.
-- Dependency direction: Presentation → Business → Stores. No circular dependencies.
-- Business services do not know about UI; presentation does not access stores directly; stores do not contain business logic.
-- Each layer has clear responsibility: business = "what can be done", presentation = "how it's shown", stores = "where it's stored".
-- Presentation services handle exception translation for UI.
-- Benefits: clearer organization, easier testing, better separation of concerns, maintainability, easier debugging.
-
-The codebase uses a strict service layer separation: stores handle raw data persistence, core services implement business logic and rules, and presentation services transform data for the UI. Presentation services (e.g., CircleDisplayService, PatternDisplayService) do not access stores directly but instead receive all required dependencies via their constructors. The RootStore is responsible for instantiating and wiring up all stores and services, ensuring that each layer only depends on the appropriate lower layer. This enforces unidirectional dependencies and clear separation of concerns throughout the app.
-
-## Tech stack for the quint-app application
-
-Tech stack for the web app in sub-directory `quint-app`:
-
-- Frontend: React 19 + TypeScript, Vite 6.3.3, Tailwind CSS 4, ShadcnUI (New York preset, Lucide icons)
-- Mobile: Capacitor 7.1.0 (iOS/Android), SQLite via @capacitor-community/sqlite (native), sql.js (web)
-- State Management: MobX 6.13.7 (RootStore, domain stores, model-store-service pattern, React context providers)
-- Testing: Jest 29.7.0 (unit/integration, jsdom), Playwright for E2E (Chromium/Firefox, ESM, aria-labels, localStorage, theme, loading state)
-- Backend/Auth: PocketBase 0.25.2 for authentication; invite code required for registration
-- Notifications: react-hot-toast
-- Logging: loglevel (centralized, runtime configurable, debug screen)
-- Error/Performance Monitoring: Sentry (browser, react, replay, vite-plugin, debug screen)
-- Key Utilities: @capacitor/share, custom shareUtils.ts, centralized logger, error UI, toast notifications
-- Build/Config: Vite plugins (React, Tailwind, Sentry, rollup visualizer), HTTPS dev server, API proxy, CORS for Sentry, custom chunking
-- TypeScript: Strict mode, ES2020/2022, isolated modules, separate configs for app/node
-- ESLint: Prettier, React, React Hooks, Refresh plugins
-- File Structure: src/ (api, components, screens, db, assets, styles, config, utils), ios/, android/, public/, dist/
-- Database Layer: Platform-agnostic service, parameterized queries, three-stage init, asset-based deployment, unified error handling
-- UI Patterns: Modular, utility-first, dark mode, responsive, state-based styling, fixed nav/button bars, centralized routes
-- Dev Scripts: npm run dev, build, lint, preview, test, test:watch
-- Playwright: E2E tests in tests/smoke/, cross-browser, environment switching, accessibility, theme/localStorage testing.
-
-## Offer to run TypeScript linter e.g. after updating .ts or .tsx files
-
-After modifying .ts or .tsx files, offer/remind the user to run
-linters to check the code quality. Wait for the user to confirm before
-running them yourself.
-
-When requested or approved explicitly:
-
-- Run `npx eslint . --fix` in the `quint-app` directory for the main web app
-- Run `npm run lint` to check all errors have been fixed.
-- Address remaining errors if you can, or ask the user for further instructions.
 
 ## Git workflow and commit practices including commit message formatting
 
