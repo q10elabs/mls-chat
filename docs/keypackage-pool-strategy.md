@@ -20,6 +20,78 @@ This document specifies the recommended strategy for managing a **pool of fresh 
 - This breaks async invitations, the core value of KeyPackages
 - Current in-memory storage is **broken for production use**
 
+## OpenMLS Storage Backend Architecture
+
+**Investigation Findings (2025-11-05):**
+
+OpenMLS uses the `StorageProvider` trait to manage all persistent key material, including KeyPackageBundle private keys. Understanding this architecture is critical for correct implementation.
+
+### Key Discovery: Automatic Storage
+
+When calling `KeyPackage::builder().build()`:
+1. OpenMLS generates the complete KeyPackageBundle (public + both private keys)
+2. Automatically stores the entire bundle via `provider.storage().write_key_package()`
+3. The StorageProvider receives the full bundle including `private_init_key` and `private_encryption_key`
+
+**Source evidence:**
+- `openmls/openmls/src/key_packages/mod.rs:547-550` shows auto-storage on build
+- `openmls/traits/src/storage.rs:221-238` defines `write_key_package()` accepting KeyPackageBundle
+- Documentation confirms: "Clients keep the private key material corresponding to a key package locally in the key store" (create_key_package.md:15)
+
+### Storage Responsibility
+
+**The StorageProvider trait is THE authoritative storage mechanism for:**
+- KeyPackageBundle (all three components)
+- Group state and secrets
+- Encryption keys for epochs
+- Message secrets for forward secrecy
+
+**Important distinction:**
+- `write_encryption_key_pair()` is ONLY for update leaf nodes, NOT for KeyPackages
+- Comment states: "This is only be used for encryption key pairs that are generated for update leaf nodes. All other encryption key pairs are stored as part of the key package or the epoch encryption key pairs."
+
+### Current Implementation: Dual Storage
+
+Our current implementation has **duplicate storage**:
+1. OpenMLS auto-stores KeyPackageBundle via its StorageProvider
+2. We extract keys and store them AGAIN in our LocalStore
+
+**Options for Phase 2.2+:**
+
+A. **Implement StorageProvider trait for LocalStore** (recommended for Phase 3)
+   - Make LocalStore the single source of truth
+   - OpenMLS directly uses our database
+   - Eliminates duplication
+   - Major refactoring effort
+
+B. **Continue dual storage** (current approach, adequate for Phase 2.2)
+   - Keep both storage layers
+   - LocalStore manages KeyPackage pool metadata
+   - OpenMLS StorageProvider handles crypto operations
+   - Fix: Extract `private_encryption_key` properly (currently placeholder)
+
+C. **Use build_without_storage()** (test-only)
+   - Available for testing but not production
+   - Requires manual storage management
+   - Loses OpenMLS forward-secrecy guarantees
+
+### Forward-Secrecy Requirement
+
+From `persistence.md:9-11`:
+> "OpenMLS uses the `StorageProvider` to store sensitive key material. To achieve forward-secrecy (i.e. to prevent an adversary from decrypting messages sent in the past if a client is compromised), OpenMLS frequently deletes previously used key material through calls to the `StorageProvider`."
+
+**Implication:** Any custom storage must implement proper deletion semantics. The StorageProvider's `delete_*` functions must irrevocably delete key material with no copies kept.
+
+### Recommendation
+
+For Phase 2.2, continue Option B (dual storage) with fixes:
+- Accept that OpenMLS auto-stores KeyPackageBundle
+- Keep LocalStore for pool management and metadata
+- Fix the placeholder `private_encryption_key` storage
+- Plan migration to Option A (implement StorageProvider trait) in Phase 3
+
+This preserves our LocalStore API while ensuring correct KeyPackage functionality.
+
 ## What a KeyPackage Is (in Practice)
 
 - **Signed bundle**: Contains device's HPKE init public key, Credential, ciphersuite/capabilities, and extensions
