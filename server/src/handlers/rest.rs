@@ -1,9 +1,32 @@
 /// REST API handlers for HTTP endpoints.
 /// Handles user registration, key retrieval, and backup management.
-
-use crate::db::{models::*, Database, DbPool};
+use crate::db::{
+    keypackage_store::KeyPackageStatus, keypackage_store::KeyPackageStore, models::*, Database,
+    DbPool,
+};
 use actix_web::{web, HttpResponse, Result as ActixResult};
+use base64::{engine::general_purpose, Engine as _};
 use serde_json::json;
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UploadKeyPackageItem {
+    keypackage_ref: String,
+    keypackage: String,
+    not_after: i64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UploadKeyPackagesRequest {
+    username: String,
+    keypackages: Vec<UploadKeyPackageItem>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct UploadKeyPackagesResponse {
+    accepted: usize,
+    rejected: Vec<String>,
+    pool_size: usize,
+}
 
 /// Register a new user with their key package
 /// POST /users
@@ -70,10 +93,12 @@ pub async fn store_backup(
 ) -> ActixResult<HttpResponse> {
     // Verify user exists
     match Database::get_user(&pool, &username).await {
-        Ok(Some(_)) => {},
-        Ok(None) => return Ok(HttpResponse::NotFound().json(json!({
-            "error": "User not found"
-        }))),
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return Ok(HttpResponse::NotFound().json(json!({
+                "error": "User not found"
+            })))
+        }
         Err(e) => {
             log::error!("Database error: {}", e);
             return Ok(HttpResponse::InternalServerError().json(json!({
@@ -135,3 +160,82 @@ pub async fn health() -> ActixResult<HttpResponse> {
     })))
 }
 
+/// Upload a batch of KeyPackages for a user
+/// POST /keypackages/upload
+pub async fn upload_key_packages(
+    pool: web::Data<DbPool>,
+    req: web::Json<UploadKeyPackagesRequest>,
+) -> ActixResult<HttpResponse> {
+    if req.keypackages.is_empty() {
+        return Ok(HttpResponse::BadRequest().json(json!({
+            "error": "No keypackages provided"
+        })));
+    }
+
+    let mut accepted = 0usize;
+    let mut rejected = Vec::new();
+
+    for item in &req.keypackages {
+        let ref_bytes: Vec<u8> = match general_purpose::STANDARD.decode(&item.keypackage_ref) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                log::warn!("Invalid keypackage_ref for user {}: {}", req.username, err);
+                rejected.push(item.keypackage_ref.clone());
+                continue;
+            }
+        };
+
+        let package_bytes: Vec<u8> = match general_purpose::STANDARD.decode(&item.keypackage) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                log::warn!(
+                    "Invalid keypackage bytes for user {}: {}",
+                    req.username,
+                    err
+                );
+                rejected.push(item.keypackage_ref.clone());
+                continue;
+            }
+        };
+
+        match KeyPackageStore::save_key_package(
+            &pool,
+            &req.username,
+            &ref_bytes,
+            &package_bytes,
+            item.not_after,
+            None,
+            None,
+        )
+        .await
+        {
+            Ok(_) => {
+                accepted += 1;
+                log::debug!(
+                    "Stored keypackage for user {} (ref={})",
+                    req.username,
+                    item.keypackage_ref
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "Failed to store keypackage for user {}: {}",
+                    req.username,
+                    err
+                );
+                rejected.push(item.keypackage_ref.clone());
+            }
+        }
+    }
+
+    let pool_size =
+        KeyPackageStore::count_by_status(&pool, &req.username, KeyPackageStatus::Available)
+            .await
+            .unwrap_or(0);
+
+    Ok(HttpResponse::Ok().json(UploadKeyPackagesResponse {
+        accepted,
+        rejected,
+        pool_size,
+    }))
+}

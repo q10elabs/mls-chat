@@ -4,7 +4,6 @@
 /// - Command-line argument parsing
 /// - Database initialization
 /// - HTTP and WebSocket server startup
-
 mod config;
 mod db;
 mod handlers;
@@ -13,9 +12,9 @@ mod server;
 use actix_web::web;
 use config::Config;
 use handlers::WsServer;
-use std::sync::Arc;
 use std::fs;
 use std::process;
+use std::sync::Arc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -37,7 +36,8 @@ async fn main() -> std::io::Result<()> {
     }
 
     // Initialize database
-    let pool = db::create_pool(config.database.to_str().unwrap()).expect("Failed to create database pool");
+    let pool =
+        db::create_pool(config.database.to_str().unwrap()).expect("Failed to create database pool");
 
     log::info!("Database initialized");
 

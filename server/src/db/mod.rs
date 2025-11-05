@@ -1,6 +1,5 @@
 /// Database layer for persistent storage.
 /// Handles all database operations for users, groups, messages, and backups.
-
 pub mod init;
 pub mod keypackage_store;
 pub mod models;
@@ -32,7 +31,11 @@ pub struct Database;
 
 impl Database {
     /// Register a new user with their key package
-    pub async fn register_user(pool: &DbPool, username: &str, key_package: &[u8]) -> SqliteResult<User> {
+    pub async fn register_user(
+        pool: &DbPool,
+        username: &str,
+        key_package: &[u8],
+    ) -> SqliteResult<User> {
         let conn = pool.lock().await;
         let created_at = Utc::now().to_rfc3339();
 
@@ -42,7 +45,9 @@ impl Database {
         )?;
 
         // Retrieve the inserted user
-        let mut stmt = conn.prepare("SELECT id, username, key_package, created_at FROM users WHERE username = ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT id, username, key_package, created_at FROM users WHERE username = ?1",
+        )?;
         let user = stmt.query_row(params![username], |row| {
             Ok(User {
                 id: row.get(0)?,
@@ -81,9 +86,8 @@ impl Database {
     pub async fn get_user_by_id(pool: &DbPool, user_id: i64) -> SqliteResult<Option<User>> {
         let conn = pool.lock().await;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, username, key_package, created_at FROM users WHERE id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, username, key_package, created_at FROM users WHERE id = ?1")?;
 
         let user = stmt
             .query_row(params![user_id], |row| {
@@ -176,7 +180,11 @@ impl Database {
     }
 
     /// Get messages for a group
-    pub async fn get_group_messages(pool: &DbPool, group_id: i64, limit: i64) -> SqliteResult<Vec<Message>> {
+    pub async fn get_group_messages(
+        pool: &DbPool,
+        group_id: i64,
+        limit: i64,
+    ) -> SqliteResult<Vec<Message>> {
         let conn = pool.lock().await;
 
         let mut stmt = conn.prepare(
@@ -271,7 +279,9 @@ mod tests {
     async fn test_get_user() {
         let pool = create_test_pool();
         let key_package = vec![0x05, 0x06, 0x07, 0x08];
-        Database::register_user(&pool, "bob", &key_package).await.expect("Failed to register");
+        Database::register_user(&pool, "bob", &key_package)
+            .await
+            .expect("Failed to register");
 
         let user = Database::get_user(&pool, "bob")
             .await

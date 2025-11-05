@@ -1,6 +1,5 @@
 /// Integration tests for REST API endpoints
 /// Tests database operations and error handling through direct DB calls
-
 use mls_chat_server::db::{Database, DbPool};
 
 #[tokio::test]

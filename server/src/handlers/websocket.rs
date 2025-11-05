@@ -1,6 +1,5 @@
 /// WebSocket handler for real-time message distribution.
 /// Manages client connections, group subscriptions, and message broadcasting.
-
 use crate::db::{Database, DbPool};
 use actix::prelude::*;
 use actix_web::{web, HttpRequest, HttpResponse};
@@ -36,7 +35,11 @@ impl WsServer {
     }
 
     /// Register a client connection
-    pub async fn register(&self, client_id: String, tx: tokio::sync::mpsc::UnboundedSender<String>) {
+    pub async fn register(
+        &self,
+        client_id: String,
+        tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) {
         let mut clients = self.clients.write().await;
         clients.insert(client_id, tx);
     }
@@ -94,7 +97,8 @@ impl WsServer {
         let group = match Database::get_group(self.pool.as_ref().as_ref(), group_id).await {
             Ok(Some(g)) => g,
             Ok(None) => {
-                match Database::create_group(self.pool.as_ref().as_ref(), group_id, group_id).await {
+                match Database::create_group(self.pool.as_ref().as_ref(), group_id, group_id).await
+                {
                     Ok(g) => g,
                     Err(e) => {
                         log::error!("Failed to create group: {}", e);
@@ -122,8 +126,13 @@ impl WsServer {
         };
 
         // Store message
-        match Database::store_message(self.pool.as_ref().as_ref(), group.id, user.id, encrypted_content)
-            .await
+        match Database::store_message(
+            self.pool.as_ref().as_ref(),
+            group.id,
+            user.id,
+            encrypted_content,
+        )
+        .await
         {
             Ok(_) => true,
             Err(e) => {
@@ -184,7 +193,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
                         if let Some(action) = value.get("action").and_then(|a| a.as_str()) {
                             match action {
                                 "subscribe" => {
-                                    if let Some(group_id) = value.get("group_id").and_then(|g| g.as_str()) {
+                                    if let Some(group_id) =
+                                        value.get("group_id").and_then(|g| g.as_str())
+                                    {
                                         let server = self.server.clone();
                                         let client_id = self.client_id.clone();
                                         let group_id = group_id.to_string();
@@ -194,7 +205,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
                                     }
                                 }
                                 "unsubscribe" => {
-                                    if let Some(group_id) = value.get("group_id").and_then(|g| g.as_str())
+                                    if let Some(group_id) =
+                                        value.get("group_id").and_then(|g| g.as_str())
                                     {
                                         let server = self.server.clone();
                                         let client_id = self.client_id.clone();
@@ -212,16 +224,23 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
                             // Handle MLS envelope-based messages (discriminated by type field)
                             match msg_type {
                                 "application" => {
-                                    if let Some(group_id) = value.get("group_id").and_then(|g| g.as_str())
+                                    if let Some(group_id) =
+                                        value.get("group_id").and_then(|g| g.as_str())
                                     {
-                                        if let Some(encrypted_content) = value.get("encrypted_content").and_then(|c| c.as_str()) {
+                                        if let Some(encrypted_content) =
+                                            value.get("encrypted_content").and_then(|c| c.as_str())
+                                        {
                                             let server = self.server.clone();
                                             let username = self.username.clone();
                                             let group_id = group_id.to_string();
                                             let encrypted_content = encrypted_content.to_string();
                                             actix::spawn(async move {
                                                 let persisted = server
-                                                    .persist_message(&group_id, &username, &encrypted_content)
+                                                    .persist_message(
+                                                        &group_id,
+                                                        &username,
+                                                        &encrypted_content,
+                                                    )
                                                     .await;
 
                                                 if persisted {
@@ -232,17 +251,28 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
                                                         "encrypted_content": encrypted_content
                                                     })
                                                     .to_string();
-                                                    server.broadcast_to_group(&group_id, &msg).await;
+                                                    server
+                                                        .broadcast_to_group(&group_id, &msg)
+                                                        .await;
                                                 }
                                             });
                                         }
                                     }
                                 }
                                 "welcome" => {
-                                    if let Some(welcome_blob) = value.get("welcome_blob").and_then(|w| w.as_str()) {
-                                        if let Some(inviter) = value.get("inviter").and_then(|i| i.as_str()) {
-                                            if let Some(invitee) = value.get("invitee").and_then(|i| i.as_str()) {
-                                                if let Some(ratchet_tree) = value.get("ratchet_tree_blob").and_then(|r| r.as_str()) {
+                                    if let Some(welcome_blob) =
+                                        value.get("welcome_blob").and_then(|w| w.as_str())
+                                    {
+                                        if let Some(inviter) =
+                                            value.get("inviter").and_then(|i| i.as_str())
+                                        {
+                                            if let Some(invitee) =
+                                                value.get("invitee").and_then(|i| i.as_str())
+                                            {
+                                                if let Some(ratchet_tree) = value
+                                                    .get("ratchet_tree_blob")
+                                                    .and_then(|r| r.as_str())
+                                                {
                                                     let server = self.server.clone();
                                                     let inviter = inviter.to_string();
                                                     let invitee = invitee.to_string();
@@ -258,7 +288,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
                                                         })
                                                         .to_string();
                                                         // Send Welcome message directly to the invitee
-                                                        server.broadcast_to_group(&invitee, &msg).await;
+                                                        server
+                                                            .broadcast_to_group(&invitee, &msg)
+                                                            .await;
                                                     });
                                                 }
                                             }
@@ -266,10 +298,15 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
                                     }
                                 }
                                 "commit" => {
-                                    if let Some(group_id) = value.get("group_id").and_then(|g| g.as_str())
+                                    if let Some(group_id) =
+                                        value.get("group_id").and_then(|g| g.as_str())
                                     {
-                                        if let Some(commit_blob) = value.get("commit_blob").and_then(|c| c.as_str()) {
-                                            if let Some(sender) = value.get("sender").and_then(|s| s.as_str()) {
+                                        if let Some(commit_blob) =
+                                            value.get("commit_blob").and_then(|c| c.as_str())
+                                        {
+                                            if let Some(sender) =
+                                                value.get("sender").and_then(|s| s.as_str())
+                                            {
                                                 let server = self.server.clone();
                                                 let group_id = group_id.to_string();
                                                 let commit_blob = commit_blob.to_string();
@@ -282,7 +319,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsActor {
                                                         "commit_blob": commit_blob
                                                     })
                                                     .to_string();
-                                                    server.broadcast_to_group(&group_id, &msg).await;
+                                                    server
+                                                        .broadcast_to_group(&group_id, &msg)
+                                                        .await;
                                                 });
                                             }
                                         }

@@ -1,10 +1,9 @@
+use actix_web::web;
 /// WebSocket integration tests
 /// Tests WebSocket connections, message broadcasting, and group subscriptions
-
 use mls_chat_server::db::Database;
 use mls_chat_server::handlers::WsServer;
 use std::sync::Arc;
-use actix_web::web;
 
 #[tokio::test]
 async fn test_websocket_client_lifecycle() {
@@ -86,10 +85,8 @@ async fn test_websocket_message_broadcast() {
     assert_eq!(rx2.recv().await, Some("hello group1".to_string()));
 
     // Client 3 should not receive anything
-    let timeout_result = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        rx3.recv(),
-    ).await;
+    let timeout_result =
+        tokio::time::timeout(std::time::Duration::from_millis(100), rx3.recv()).await;
     assert!(timeout_result.is_err()); // Timeout indicates no message received
 }
 
@@ -111,10 +108,8 @@ async fn test_websocket_unsubscribe() {
     // Broadcast should not reach client1
     server.broadcast_to_group("group1", "message").await;
 
-    let timeout_result = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        rx1.recv(),
-    ).await;
+    let timeout_result =
+        tokio::time::timeout(std::time::Duration::from_millis(100), rx1.recv()).await;
     assert!(timeout_result.is_err());
 }
 
@@ -221,15 +216,11 @@ async fn test_websocket_multiple_clients_same_group() {
         .await;
 
     // Alice persists a message
-    let persisted = server
-        .persist_message("team", "alice", "alice_msg")
-        .await;
+    let persisted = server.persist_message("team", "alice", "alice_msg").await;
     assert!(persisted);
 
     // Bob persists a message
-    let persisted = server
-        .persist_message("team", "bob", "bob_msg")
-        .await;
+    let persisted = server.persist_message("team", "bob", "bob_msg").await;
     assert!(persisted);
 
     // Verify both messages were stored

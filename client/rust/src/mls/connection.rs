@@ -33,19 +33,27 @@
 //! }
 //! ```
 
-use crate::api::ServerApi;
+use crate::api::{KeyPackageUpload, ServerApi};
 use crate::crypto;
-use crate::error::{ClientError, Result};
+use crate::error::{ClientError, MlsError, Result};
 use crate::identity::IdentityManager;
+use crate::mls::keypackage_pool::{KeyPackagePool, KeyPackagePoolConfig};
 use crate::mls::membership::MlsMembership;
 use crate::mls::user::MlsUser;
 use crate::models::{Identity, MlsMessageEnvelope};
 use crate::provider::MlsProvider;
-use crate::storage::LocalStore;
+use crate::storage::{KeyPackageMetadata, LocalStore};
 use crate::websocket::MessageHandler;
 use base64::{engine::general_purpose, Engine as _};
-use std::collections::HashMap;
+use openmls::prelude::KeyPackageBundle;
+use openmls_traits::storage::traits as storage_traits;
+use openmls_traits::storage::{self, StorageProvider};
+use openmls_traits::OpenMlsProvider;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::SystemTime;
+use tls_codec::Serialize as TlsSerialize;
 
 /// MLS Connection - Infrastructure and message routing
 ///
@@ -58,6 +66,7 @@ use std::path::Path;
 /// - `metadata_store`: Application-level metadata storage
 /// - `mls_provider`: OpenMLS provider for crypto operations and group storage
 /// - `api`: HTTP API client for server communication
+/// - `keypackage_pool_config`: Thresholds for KeyPackage pool management
 /// - `websocket`: WebSocket connection for real-time messaging
 /// - `user`: User identity (created during initialization)
 /// - `memberships`: Map of group_id (bytes) to MlsMembership instances
@@ -87,6 +96,9 @@ pub struct MlsConnection {
     /// HTTP API client for server communication
     api: ServerApi,
 
+    /// Configuration parameters for the KeyPackage pool
+    keypackage_pool_config: KeyPackagePoolConfig,
+
     /// WebSocket connection for real-time messaging
     websocket: Option<MessageHandler>,
 
@@ -96,6 +108,13 @@ pub struct MlsConnection {
     /// Group memberships (keyed by group_id bytes)
     memberships: HashMap<Vec<u8>, MlsMembership<'static>>,
 }
+
+#[derive(Clone, Serialize, Deserialize)]
+struct StoredKeyPackageRef(Vec<u8>);
+
+impl storage_traits::HashReference<{ storage::CURRENT_VERSION }> for StoredKeyPackageRef {}
+
+impl storage::Key<{ storage::CURRENT_VERSION }> for StoredKeyPackageRef {}
 
 impl MlsConnection {
     /// Create a new MLS connection with infrastructure
@@ -147,6 +166,7 @@ impl MlsConnection {
             metadata_store,
             mls_provider,
             api,
+            keypackage_pool_config: KeyPackagePoolConfig::default(),
             websocket: None,
             user: None,
             memberships: HashMap::new(),
@@ -243,10 +263,9 @@ impl MlsConnection {
 
         // === Step 5: Register with server (idempotent) ===
         // This may fail in tests, but user is already stored locally
-        let _ = self
-            .api
+        self.api
             .register_user(&self.username, &key_package_bytes)
-            .await;
+            .await?;
 
         log::info!("MlsConnection initialized for {}", self.username);
         Ok(())
@@ -463,6 +482,69 @@ impl MlsConnection {
         }
     }
 
+    /// Refresh the local KeyPackage pool by cleaning up expired entries,
+    /// replenishing when thresholds are breached, and uploading pending
+    /// KeyPackages to the server.
+    pub async fn refresh_key_packages(&mut self) -> Result<()> {
+        let user = self.user.as_ref().ok_or_else(|| {
+            ClientError::Config("User not initialized - call initialize() first".to_string())
+        })?;
+
+        let pool = KeyPackagePool::new(
+            self.username.clone(),
+            self.keypackage_pool_config.clone(),
+            &self.metadata_store,
+        );
+
+        let removed = pool.cleanup_expired(&self.mls_provider, SystemTime::now())?;
+        if removed > 0 {
+            log::info!(
+                "Removed {} expired keypackages for user {}",
+                removed,
+                self.username
+            );
+        }
+
+        let uploaded = self.upload_pending_keypackages().await?;
+        if uploaded > 0 {
+            log::info!(
+                "Uploaded {} pending keypackages for user {}",
+                uploaded,
+                self.username
+            );
+        }
+
+        if pool.should_replenish()? {
+            if let Some(needed) = pool.get_replenishment_needed()? {
+                if needed > 0 {
+                    log::info!(
+                        "KeyPackage pool low (need {}). Generating replenishment batch",
+                        needed
+                    );
+
+                    pool.generate_and_update_pool(
+                        needed,
+                        user.get_credential_with_key(),
+                        user.get_signature_key(),
+                        &self.mls_provider,
+                    )
+                    .await?;
+
+                    let newly_uploaded = self.upload_pending_keypackages().await?;
+                    if newly_uploaded > 0 {
+                        log::info!(
+                            "Uploaded {} newly generated keypackages for user {}",
+                            newly_uploaded,
+                            self.username
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get reference to user identity
     ///
     /// Returns None if initialize() has not been called yet.
@@ -473,6 +555,11 @@ impl MlsConnection {
     /// Get reference to MLS provider
     pub fn get_provider(&self) -> &MlsProvider {
         &self.mls_provider
+    }
+
+    /// Override KeyPackage pool configuration (intended for testing hooks)
+    pub fn set_keypackage_pool_config(&mut self, config: KeyPackagePoolConfig) {
+        self.keypackage_pool_config = config;
     }
 
     /// Get reference to server API client
@@ -544,6 +631,93 @@ impl MlsConnection {
             general_purpose::STANDARD.encode(&group_id)
         );
         self.memberships.insert(group_id, membership);
+    }
+
+    async fn upload_pending_keypackages(&self) -> Result<usize> {
+        let pending = self.metadata_store.get_metadata_by_status("created")?;
+        if pending.is_empty() {
+            return Ok(0);
+        }
+
+        let mut uploads = Vec::new();
+        for metadata in pending {
+            match self.load_keypackage_bytes(&metadata)? {
+                Some(bytes) => uploads.push(KeyPackageUpload {
+                    keypackage_ref: metadata.keypackage_ref.clone(),
+                    keypackage: bytes,
+                    not_after: metadata.not_after,
+                }),
+                None => {
+                    log::warn!(
+                        "Missing KeyPackage in provider storage for user {}",
+                        self.username
+                    );
+                    self.metadata_store
+                        .update_pool_metadata_status(&metadata.keypackage_ref, "failed")?;
+                }
+            }
+        }
+
+        if uploads.is_empty() {
+            return Ok(0);
+        }
+
+        let response = self
+            .api
+            .upload_key_packages(&self.username, &uploads)
+            .await?;
+
+        let mut rejected_refs: HashSet<Vec<u8>> = HashSet::new();
+        for rejected in response.rejected {
+            match general_purpose::STANDARD.decode(&rejected) {
+                Ok(bytes) => {
+                    self.metadata_store
+                        .update_pool_metadata_status(&bytes, "failed")?;
+                    rejected_refs.insert(bytes);
+                }
+                Err(err) => {
+                    log::warn!(
+                        "Invalid rejected keypackage ref from server for user {}: {}",
+                        self.username,
+                        err
+                    );
+                }
+            }
+        }
+
+        let mut promoted = 0usize;
+        for upload in uploads {
+            if rejected_refs.contains(&upload.keypackage_ref) {
+                continue;
+            }
+
+            self.metadata_store
+                .update_pool_metadata_status(&upload.keypackage_ref, "uploaded")?;
+            self.metadata_store
+                .update_pool_metadata_status(&upload.keypackage_ref, "available")?;
+            promoted += 1;
+        }
+
+        Ok(promoted)
+    }
+
+    fn load_keypackage_bytes(&self, metadata: &KeyPackageMetadata) -> Result<Option<Vec<u8>>> {
+        let reference = StoredKeyPackageRef(metadata.keypackage_ref.clone());
+        let maybe_bundle = self
+            .mls_provider
+            .storage()
+            .key_package::<_, KeyPackageBundle>(&reference)
+            .map_err(|err| ClientError::Mls(MlsError::OpenMls(err.to_string())))?;
+
+        if let Some(bundle) = maybe_bundle {
+            let serialized = bundle
+                .key_package()
+                .tls_serialize_detached()
+                .map_err(|err| ClientError::Mls(MlsError::OpenMls(err.to_string())))?;
+            Ok(Some(serialized))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Send a message to a specific group

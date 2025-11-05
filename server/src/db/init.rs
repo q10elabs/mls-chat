@@ -1,6 +1,5 @@
 /// Database schema initialization.
 /// Sets up SQLite WAL mode and creates tables on startup.
-
 use rusqlite::{Connection, Result as SqliteResult};
 
 /// Initialize database connection with WAL mode and schema
@@ -55,6 +54,31 @@ fn create_schema(conn: &Connection) -> SqliteResult<()> {
         CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id);
         CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
         CREATE INDEX IF NOT EXISTS idx_backups_username ON backups(username);
+
+        CREATE TABLE IF NOT EXISTS keypackages (
+            keypackage_ref BLOB NOT NULL,
+            username TEXT NOT NULL,
+            keypackage_bytes BLOB NOT NULL,
+            uploaded_at INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'available',
+            reservation_id TEXT UNIQUE,
+            reservation_expires_at INTEGER,
+            reserved_by TEXT,
+            spent_at INTEGER,
+            spent_by TEXT,
+            group_id BLOB,
+            not_after INTEGER NOT NULL,
+            credential_hash BLOB,
+            ciphersuite INTEGER,
+            PRIMARY KEY (username, keypackage_ref)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_keypackages_user_status
+            ON keypackages(username, status);
+        CREATE INDEX IF NOT EXISTS idx_keypackages_user_expiry
+            ON keypackages(username, not_after);
+        CREATE INDEX IF NOT EXISTS idx_keypackages_reservation
+            ON keypackages(reservation_id);
         "#,
     )?;
 
@@ -73,7 +97,9 @@ mod tests {
 
         // Verify tables exist
         let tables: Vec<String> = conn
-            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+            )
             .expect("Query failed")
             .query_map([], |row| row.get(0))
             .expect("Mapping failed")

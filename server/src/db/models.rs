@@ -1,6 +1,5 @@
 /// Data models for database operations.
 /// Represents users, groups, messages, and backups.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

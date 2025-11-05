@@ -1,6 +1,7 @@
 //! Server API client for REST endpoints
 
 use crate::error::{NetworkError, Result};
+use base64::{engine::general_purpose, Engine as _};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -9,6 +10,22 @@ use std::time::Duration;
 pub struct ServerApi {
     client: Client,
     base_url: String,
+}
+
+/// Payload record for uploading a KeyPackage to the server
+#[derive(Debug, Clone)]
+pub struct KeyPackageUpload {
+    pub keypackage_ref: Vec<u8>,
+    pub keypackage: Vec<u8>,
+    pub not_after: i64,
+}
+
+/// Response returned after uploading a batch of KeyPackages
+#[derive(Debug, Clone, Deserialize)]
+pub struct UploadKeyPackagesResponse {
+    pub accepted: usize,
+    pub rejected: Vec<String>,
+    pub pool_size: usize,
 }
 
 #[derive(Serialize)]
@@ -148,6 +165,58 @@ impl ServerApi {
             Ok(())
         } else {
             Err(NetworkError::Server(format!("Health check failed: {}", response.status())).into())
+        }
+    }
+
+    /// Upload a batch of KeyPackages for the specified username
+    pub async fn upload_key_packages(
+        &self,
+        username: &str,
+        packages: &[KeyPackageUpload],
+    ) -> Result<UploadKeyPackagesResponse> {
+        if packages.is_empty() {
+            return Err(NetworkError::Server("No keypackages to upload".to_string()).into());
+        }
+
+        #[derive(Serialize)]
+        struct UploadRequest<'a> {
+            username: &'a str,
+            keypackages: Vec<UploadRequestItem>,
+        }
+
+        #[derive(Serialize)]
+        struct UploadRequestItem {
+            keypackage_ref: String,
+            keypackage: String,
+            not_after: i64,
+        }
+
+        let keypackages = packages
+            .iter()
+            .map(|pkg| UploadRequestItem {
+                keypackage_ref: general_purpose::STANDARD.encode(&pkg.keypackage_ref),
+                keypackage: general_purpose::STANDARD.encode(&pkg.keypackage),
+                not_after: pkg.not_after,
+            })
+            .collect();
+
+        let request = UploadRequest {
+            username,
+            keypackages,
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/keypackages/upload", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let parsed: UploadKeyPackagesResponse = response.json().await?;
+            Ok(parsed)
+        } else {
+            Err(NetworkError::Server(format!("Upload failed: {}", response.status())).into())
         }
     }
 }

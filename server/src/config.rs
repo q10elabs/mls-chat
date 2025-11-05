@@ -1,6 +1,5 @@
 /// Configuration management for the MLS chat server.
 /// Handles command-line argument parsing and config structure.
-
 use clap::Parser;
 use std::path::PathBuf;
 

@@ -2,7 +2,10 @@
 ///
 /// Tests cover group creation, persistence, and state management
 /// Note: Tests that require server interaction (registration) are marked with skip
+use actix_web::web;
 use mls_chat_client::client::MlsClient;
+use mls_chat_client::mls::KeyPackagePoolConfig;
+use mls_chat_server::db::keypackage_store::{KeyPackageStatus, KeyPackageStore};
 use std::time::Duration;
 use tempfile::tempdir;
 
@@ -225,6 +228,82 @@ async fn test_client_metadata_storage() {
 
     // Client should be properly initialized structurally
     let _provider = client.get_provider();
+}
+
+/// Phase 2.3: Refresh should generate, upload, and mark KeyPackages as available
+#[tokio::test]
+async fn refresh_key_packages_generates_and_uploads() {
+    let pool = web::Data::new(mls_chat_server::db::create_test_pool());
+    let (server, addr) = mls_chat_server::server::create_test_http_server_with_pool(pool.clone())
+        .expect("Failed to create test server");
+    tokio::spawn(server);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    let server_url = format!("http://{}", addr);
+    let mut client = MlsClient::new_with_storage_path(
+        &server_url,
+        "refresh_user",
+        "refresh-group",
+        temp_dir.path(),
+    )
+    .expect("Failed to create client");
+
+    let mut config = KeyPackagePoolConfig::default();
+    config.target_pool_size = 2;
+    config.low_watermark = 1;
+    config.hard_cap = 4;
+    client.set_keypackage_pool_config(config.clone());
+
+    client
+        .initialize()
+        .await
+        .expect("Initialization should succeed");
+    client
+        .refresh_key_packages()
+        .await
+        .expect("Refresh should succeed");
+
+    let available = client
+        .get_metadata_store()
+        .count_by_status("available")
+        .expect("Metadata count should succeed");
+    assert_eq!(available, config.target_pool_size);
+
+    let created = client
+        .get_metadata_store()
+        .count_by_status("created")
+        .expect("Metadata count should succeed");
+    assert_eq!(created, 0);
+
+    let server_available = KeyPackageStore::count_by_status(
+        pool.get_ref(),
+        "refresh_user",
+        KeyPackageStatus::Available,
+    )
+    .await
+    .expect("Server count should succeed");
+    assert_eq!(server_available, config.target_pool_size);
+
+    client
+        .refresh_key_packages()
+        .await
+        .expect("Second refresh should succeed");
+
+    let available_after = client
+        .get_metadata_store()
+        .count_by_status("available")
+        .expect("Metadata count should succeed");
+    assert_eq!(available_after, config.target_pool_size);
+
+    let server_available_after = KeyPackageStore::count_by_status(
+        pool.get_ref(),
+        "refresh_user",
+        KeyPackageStatus::Available,
+    )
+    .await
+    .expect("Server count should succeed");
+    assert_eq!(server_available_after, config.target_pool_size);
 }
 
 // ============================================================================

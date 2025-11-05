@@ -7,7 +7,6 @@
 /// - Double-spend prevention via status validation
 /// - Expiry-based garbage collection
 /// - Pool health queries
-
 use rusqlite::{params, OptionalExtension, Result as SqliteResult};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -166,8 +165,8 @@ impl KeyPackageStore {
         let result = stmt
             .query_row(params![keypackage_ref], |row| {
                 let status_str: String = row.get(4)?;
-                let status = KeyPackageStatus::from_str(&status_str)
-                    .unwrap_or(KeyPackageStatus::Available);
+                let status =
+                    KeyPackageStatus::from_str(&status_str).unwrap_or(KeyPackageStatus::Available);
 
                 Ok(KeyPackageData {
                     keypackage_ref: row.get(0)?,
@@ -207,8 +206,8 @@ impl KeyPackageStore {
             params![username, KeyPackageStatus::Available.as_str(), now],
             |row| {
                 let status_str: String = row.get(3)?;
-                let status = KeyPackageStatus::from_str(&status_str)
-                    .unwrap_or(KeyPackageStatus::Available);
+                let status =
+                    KeyPackageStatus::from_str(&status_str).unwrap_or(KeyPackageStatus::Available);
 
                 Ok(KeyPackageMetadata {
                     keypackage_ref: row.get(0)?,
@@ -308,9 +307,7 @@ impl KeyPackageStore {
         let conn = pool.lock().await;
 
         // First check current status
-        let mut stmt = conn.prepare(
-            "SELECT status FROM keypackages WHERE keypackage_ref = ?1",
-        )?;
+        let mut stmt = conn.prepare("SELECT status FROM keypackages WHERE keypackage_ref = ?1")?;
 
         let current_status: Option<String> = stmt
             .query_row(params![keypackage_ref], |row| row.get(0))
@@ -420,9 +417,8 @@ impl KeyPackageStore {
     ) -> SqliteResult<usize> {
         let conn = pool.lock().await;
 
-        let mut stmt = conn.prepare(
-            "SELECT COUNT(*) FROM keypackages WHERE username = ?1 AND status = ?2",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT COUNT(*) FROM keypackages WHERE username = ?1 AND status = ?2")?;
 
         let count: i64 = stmt.query_row(params![username, status.as_str()], |row| row.get(0))?;
         Ok(count as usize)
@@ -493,8 +489,8 @@ mod tests {
             .unwrap();
 
         // Second spend should fail (double-spend)
-        let result = KeyPackageStore::spend_key_package(&pool, &keypackage_ref, &group_id, "charlie")
-            .await;
+        let result =
+            KeyPackageStore::spend_key_package(&pool, &keypackage_ref, &group_id, "charlie").await;
 
         assert!(result.is_err());
 
@@ -710,25 +706,15 @@ mod tests {
         }
 
         // Reserve keys concurrently (simulated)
-        let reserved1 = KeyPackageStore::reserve_key_package(
-            &pool,
-            "frank",
-            &vec![0xaa],
-            "alice",
-        )
-        .await
-        .unwrap()
-        .expect("First reservation should succeed");
+        let reserved1 = KeyPackageStore::reserve_key_package(&pool, "frank", &vec![0xaa], "alice")
+            .await
+            .unwrap()
+            .expect("First reservation should succeed");
 
-        let reserved2 = KeyPackageStore::reserve_key_package(
-            &pool,
-            "frank",
-            &vec![0xbb],
-            "bob",
-        )
-        .await
-        .unwrap()
-        .expect("Second reservation should succeed");
+        let reserved2 = KeyPackageStore::reserve_key_package(&pool, "frank", &vec![0xbb], "bob")
+            .await
+            .unwrap()
+            .expect("Second reservation should succeed");
 
         // Verify different keys were reserved
         assert_ne!(reserved1.keypackage_ref, reserved2.keypackage_ref);

@@ -6,8 +6,10 @@
 use crate::api::ServerApi;
 use crate::error::{ClientError, Result};
 use crate::mls::connection::MlsConnection;
+use crate::mls::keypackage_pool::KeyPackagePoolConfig;
 use crate::models::Identity;
 use crate::provider::MlsProvider;
+use crate::storage::LocalStore;
 use std::path::Path;
 
 /// Main MLS client
@@ -85,6 +87,16 @@ impl MlsClient {
         log::info!("Initializing MlsClient");
         self.connection.initialize().await?;
         Ok(())
+    }
+
+    /// Refresh the KeyPackage pool for this client
+    pub async fn refresh_key_packages(&mut self) -> Result<()> {
+        self.connection.refresh_key_packages().await
+    }
+
+    /// Override the KeyPackage pool configuration (primarily for tests)
+    pub fn set_keypackage_pool_config(&mut self, config: KeyPackagePoolConfig) {
+        self.connection.set_keypackage_pool_config(config);
     }
 
     /// Connect to group (create or load existing)
@@ -182,6 +194,11 @@ impl MlsClient {
             }
         }
         vec![]
+    }
+
+    /// Expose metadata store reference (primarily for integration tests)
+    pub fn get_metadata_store(&self) -> &LocalStore {
+        self.connection.get_metadata_store()
     }
 
     /// Get current group name from selected membership

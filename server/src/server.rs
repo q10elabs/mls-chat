@@ -1,12 +1,12 @@
+use crate::db::DbPool;
+use crate::handlers::{
+    get_backup, get_user_key, health, register_user, store_backup, upload_key_packages, ws_connect,
+    WsServer,
+};
 /// HTTP server factory and configuration.
 /// Provides a reusable function to create and configure the HTTP server
 /// for use in both the main binary and tests.
-
-use actix_web::{web, App, HttpServer, middleware};
-use crate::db::DbPool;
-use crate::handlers::{
-    get_backup, get_user_key, health, register_user, store_backup, ws_connect, WsServer,
-};
+use actix_web::{middleware, web, App, HttpServer};
 use std::sync::Arc;
 
 /// Create a configured HTTP server
@@ -45,6 +45,7 @@ pub fn create_http_server(
             .route("/users/{username}", web::get().to(get_user_key))
             .route("/backup/{username}", web::post().to(store_backup))
             .route("/backup/{username}", web::get().to(get_backup))
+            .route("/keypackages/upload", web::post().to(upload_key_packages))
             // WebSocket endpoint
             .route("/ws/{username}", web::get().to(ws_connect))
     })
@@ -104,6 +105,7 @@ pub fn create_test_http_server_with_pool(
             .route("/users/{username}", web::get().to(get_user_key))
             .route("/backup/{username}", web::post().to(store_backup))
             .route("/backup/{username}", web::get().to(get_backup))
+            .route("/keypackages/upload", web::post().to(upload_key_packages))
             // WebSocket endpoint
             .route("/ws/{username}", web::get().to(ws_connect))
     })
@@ -162,17 +164,26 @@ mod tests {
 
         // Try to bind to an invalid address
         let result = create_http_server(pool, ws_server, "invalid_address:99999");
-        assert!(result.is_err(), "create_http_server should fail with invalid address");
+        assert!(
+            result.is_err(),
+            "create_http_server should fail with invalid address"
+        );
     }
 
     #[tokio::test]
     async fn test_create_test_http_server_with_pool() {
         let pool = web::Data::new(crate::db::create_test_pool());
         let result = create_test_http_server_with_pool(pool);
-        assert!(result.is_ok(), "create_test_http_server_with_pool should succeed");
+        assert!(
+            result.is_ok(),
+            "create_test_http_server_with_pool should succeed"
+        );
 
         let (_server, addr) = result.unwrap();
-        assert!(addr.contains("127.0.0.1:"), "Address should contain 127.0.0.1:");
+        assert!(
+            addr.contains("127.0.0.1:"),
+            "Address should contain 127.0.0.1:"
+        );
     }
 
     #[tokio::test]
@@ -220,7 +231,10 @@ mod tests {
 
         let (_server, addr) = result.unwrap();
         // Verify address is in expected format
-        assert!(addr.contains("127.0.0.1:"), "Address should contain 127.0.0.1:");
+        assert!(
+            addr.contains("127.0.0.1:"),
+            "Address should contain 127.0.0.1:"
+        );
         // Verify we got a port number
         let port_part = addr.split(':').nth(1).unwrap_or("");
         assert!(!port_part.is_empty(), "Port should be assigned");
@@ -228,10 +242,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_test_http_server_assigns_random_port() {
-        let (_, addr1) = create_test_http_server()
-            .expect("First server creation should succeed");
-        let (_, addr2) = create_test_http_server()
-            .expect("Second server creation should succeed");
+        let (_, addr1) = create_test_http_server().expect("First server creation should succeed");
+        let (_, addr2) = create_test_http_server().expect("Second server creation should succeed");
 
         // Both should have valid addresses with different ports
         assert!(addr1.contains("127.0.0.1:"));
@@ -257,13 +269,11 @@ mod tests {
                 .route("/backup/{username}", web::post().to(store_backup))
                 .route("/backup/{username}", web::get().to(get_backup))
                 // WebSocket endpoint
-                .route("/ws/{username}", web::get().to(ws_connect))
+                .route("/ws/{username}", web::get().to(ws_connect)),
         )
         .await;
 
-        let req = test::TestRequest::get()
-            .uri("/health")
-            .to_request();
+        let req = test::TestRequest::get().uri("/health").to_request();
 
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
@@ -286,7 +296,7 @@ mod tests {
                 .route("/backup/{username}", web::post().to(store_backup))
                 .route("/backup/{username}", web::get().to(get_backup))
                 // WebSocket endpoint
-                .route("/ws/{username}", web::get().to(ws_connect))
+                .route("/ws/{username}", web::get().to(ws_connect)),
         )
         .await;
 
@@ -327,13 +337,11 @@ mod tests {
                 .route("/backup/{username}", web::post().to(store_backup))
                 .route("/backup/{username}", web::get().to(get_backup))
                 // WebSocket endpoint
-                .route("/ws/{username}", web::get().to(ws_connect))
+                .route("/ws/{username}", web::get().to(ws_connect)),
         )
         .await;
 
-        let req = test::TestRequest::get()
-            .uri("/users/bob")
-            .to_request();
+        let req = test::TestRequest::get().uri("/users/bob").to_request();
 
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
@@ -356,7 +364,7 @@ mod tests {
                 .route("/backup/{username}", web::post().to(store_backup))
                 .route("/backup/{username}", web::get().to(get_backup))
                 // WebSocket endpoint
-                .route("/ws/{username}", web::get().to(ws_connect))
+                .route("/ws/{username}", web::get().to(ws_connect)),
         )
         .await;
 
@@ -391,7 +399,7 @@ mod tests {
                 .route("/backup/{username}", web::post().to(store_backup))
                 .route("/backup/{username}", web::get().to(get_backup))
                 // WebSocket endpoint
-                .route("/ws/{username}", web::get().to(ws_connect))
+                .route("/ws/{username}", web::get().to(ws_connect)),
         )
         .await;
 
@@ -407,9 +415,7 @@ mod tests {
         assert!(store_resp.status().is_success());
 
         // Get backup
-        let get_req = test::TestRequest::get()
-            .uri("/backup/charlie")
-            .to_request();
+        let get_req = test::TestRequest::get().uri("/backup/charlie").to_request();
 
         let get_resp = test::call_service(&app, get_req).await;
         assert!(get_resp.status().is_success());
