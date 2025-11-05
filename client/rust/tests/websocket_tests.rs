@@ -2,7 +2,6 @@
 ///
 /// Tests cover real WebSocket connectivity with the server including
 /// subscriptions, message sending/receiving, and persistence.
-
 use mls_chat_client::api::ServerApi;
 use mls_chat_client::websocket::MessageHandler;
 use mls_chat_client::crypto;

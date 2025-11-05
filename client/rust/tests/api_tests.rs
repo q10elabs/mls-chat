@@ -2,7 +2,6 @@
 ///
 /// Tests cover user registration, key retrieval, and health checks
 /// using actual HTTP server endpoints via the ServerApi client.
-
 use mls_chat_client::api::ServerApi;
 use mls_chat_client::crypto;
 use tls_codec::Serialize;

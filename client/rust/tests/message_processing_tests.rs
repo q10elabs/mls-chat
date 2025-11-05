@@ -5,7 +5,6 @@
 /// - Error handling for malformed messages
 /// - Message formatting and display
 /// - Integration with MLS group state
-
 use mls_chat_client::message_processing::*;
 use mls_chat_client::crypto;
 use mls_chat_client::provider::MlsProvider;
@@ -254,7 +253,7 @@ async fn test_message_processing_content_types() {
 
     // Test different message types
     let long_message = "Long message: ".repeat(100);
-    let messages = vec![
+    let messages = [
         "Hello world!",
         "This is a test message",
         "Special characters: !@#$%^&*()",
@@ -296,7 +295,7 @@ async fn test_corrupted_message_handling() {
     let mut group = crypto::create_group_with_config(&cred, &sig_key, &provider, "testgroup").unwrap();
 
     // Test various corrupted message scenarios
-    let corrupted_messages = vec![
+    let corrupted_messages = [
         "", // Empty message
         "a", // Single character
         "invalid", // Not base64

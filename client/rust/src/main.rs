@@ -1,7 +1,6 @@
 /// MLS Chat Client - Main entry point
 /// 
 /// A command-line client for MLS group messaging using OpenMLS
-
 use clap::Parser;
 use log::info;
 use mls_chat_client::{client::MlsClient, cli, Result};

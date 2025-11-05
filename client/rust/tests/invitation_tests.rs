@@ -5,7 +5,6 @@
 ///
 /// Note: These tests spawn a test server via mls-chat-server to verify
 /// complete client-server integration for the invitation protocol.
-
 use mls_chat_client::client::MlsClient;
 use mls_chat_client::models::MlsMessageEnvelope;
 use tempfile::tempdir;
@@ -209,7 +208,7 @@ fn test_envelope_message_type_routing() {
 
     for (msg, expected_type) in messages {
         let envelope: MlsMessageEnvelope = serde_json::from_str(msg)
-            .expect(&format!("Failed to parse: {}", msg));
+            .unwrap_or_else(|_| panic!("Failed to parse: {}", msg));
 
         // Verify each type is correctly identified
         match (envelope, expected_type) {
@@ -248,14 +247,20 @@ async fn test_multiple_sequential_invitations() {
     for user in &users {
         let temp_dir = tempdir().expect("Failed to create temp dir");
         let mut client = MlsClient::new_with_storage_path(&server_addr, user, "big-group", temp_dir.path())
-            .expect(&format!("Failed to create {}", user));
-        client.initialize().await.expect(&format!("Failed to init {}", user));
+            .unwrap_or_else(|_| panic!("Failed to create {}", user));
+        client
+            .initialize()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to init {}", user));
         user_clients.push((client, temp_dir));
     }
 
     // Alice invites each user sequentially
     for user in &users {
-        alice.invite_user(user).await.expect(&format!("Failed to invite {}", user));
+        alice
+            .invite_user(user)
+            .await
+            .unwrap_or_else(|_| panic!("Failed to invite {}", user));
         // Small delay to simulate network
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }

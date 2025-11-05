@@ -706,7 +706,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let provider = MlsProvider::new(&db_path).unwrap();
-        let metadata_store = LocalStore::new(&temp_dir.path().join("metadata.db")).unwrap();
+        let metadata_store = LocalStore::new(temp_dir.path().join("metadata.db")).unwrap();
 
         // Alice creates a group (generate credentials separately to avoid move issues)
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();

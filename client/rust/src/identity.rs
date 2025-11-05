@@ -169,7 +169,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let provider = MlsProvider::new(&db_path).unwrap();
-        let metadata_store = LocalStore::new(&db_path.with_file_name("metadata.db")).unwrap();
+        let metadata_store = LocalStore::new(db_path.with_file_name("metadata.db")).unwrap();
 
         let identity = IdentityManager::load_or_create(&provider, &metadata_store, "alice").unwrap();
 
@@ -276,8 +276,13 @@ mod tests {
         assert!(!credential_bytes.is_empty(), "Credential should be serializable");
 
         // SignaturePublicKey is non-empty if it can be serialized
-        let _sig_key_bytes = identity.credential_with_key.signature_key.clone().tls_serialize_detached().unwrap();
-        assert!(true, "Signature key should be serializable and non-empty");
+        let sig_key_bytes = identity
+            .credential_with_key
+            .signature_key
+            .clone()
+            .tls_serialize_detached()
+            .unwrap();
+        assert!(!sig_key_bytes.is_empty(), "Signature key should be serializable and non-empty");
     }
 
     #[test]

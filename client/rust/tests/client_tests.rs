@@ -2,24 +2,9 @@
 ///
 /// Tests cover group creation, persistence, and state management
 /// Note: Tests that require server interaction (registration) are marked with skip
-
 use mls_chat_client::client::MlsClient;
 use tempfile::tempdir;
 use std::time::Duration;
-
-/// Test helper: Create MlsClient with temporary directory
-///
-/// This helper ensures proper test isolation by using temporary directories
-/// and provides automatic cleanup when the test ends.
-fn create_test_client(server_url: &str, username: &str, group_name: &str) -> (MlsClient, tempfile::TempDir) {
-    let temp_dir = tempdir().expect("Failed to create temp dir");
-    let storage_path = temp_dir.path();
-    
-    let client = MlsClient::new_with_storage_path(server_url, username, group_name, storage_path)
-        .expect("Failed to create client with temp storage");
-    
-    (client, temp_dir)
-}
 
 /// Test helper: Create MlsClient with temporary directory (no server registration)
 ///
@@ -39,7 +24,7 @@ fn create_test_client_no_init(server_url: &str, username: &str, group_name: &str
 #[tokio::test]
 async fn test_group_creation_stores_mapping() {
     // Create client with temporary directory (no server dependency)
-    let (mut client, _temp_dir) = create_test_client_no_init("http://localhost:4000", "alice", "mygroup");
+    let (client, _temp_dir) = create_test_client_no_init("http://localhost:4000", "alice", "mygroup");
 
     // Test that client can be created without server
     assert!(client.get_identity().is_none(), "Should not have identity initially");
@@ -57,7 +42,7 @@ async fn test_group_creation_stores_mapping() {
 /// Test 2: Client state transitions correctly
 #[tokio::test]
 async fn test_client_state_transitions() {
-    let (mut client, _temp_dir) = create_test_client_no_init("http://localhost:4000", "alice", "group");
+    let (client, _temp_dir) = create_test_client_no_init("http://localhost:4000", "alice", "group");
 
     // Before any operations
     assert!(
@@ -312,13 +297,13 @@ async fn test_client_persistence_across_server_restarts() {
     let server_handle = tokio::spawn(server);
     
     // Create client and initialize
-    let (mut client, temp_dir) = create_client_with_server(&format!("http://{}", addr), "persistent_user", "persistent_group");
+    let (mut client, _temp_dir) = create_client_with_server(&format!("http://{}", addr), "persistent_user", "persistent_group");
     client.initialize().await.expect("Failed to initialize client");
     client.connect_to_group().await.expect("Failed to connect to group");
     
     // Verify initial state
     assert!(client.is_group_connected(), "Client should be connected initially");
-    let initial_group_id = client.get_group_id().expect("Should have group ID");
+    let _initial_group_id = client.get_group_id().expect("Should have group ID");
     
     // Stop server
     server_handle.abort();
@@ -326,7 +311,7 @@ async fn test_client_persistence_across_server_restarts() {
     
     // Create new client instance with same storage (simulating client restart)
     // This tests client-side persistence, not server-side persistence
-    let (mut client2, _temp_dir2) = create_client_with_server("http://127.0.0.1:9999", "persistent_user", "persistent_group");
+    let (client2, _temp_dir2) = create_client_with_server("http://127.0.0.1:9999", "persistent_user", "persistent_group");
     
     // Client should be able to load its local state (no server needed for this)
     // Note: This tests client-side persistence, which is the main goal

@@ -664,9 +664,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(connection.get_username(), "bob");
-        assert!(connection.get_provider() as *const _ != std::ptr::null());
-        assert!(connection.get_api() as *const _ != std::ptr::null());
-        assert!(connection.get_metadata_store() as *const _ != std::ptr::null());
+        let provider_ptr = connection.get_provider() as *const MlsProvider;
+        assert!(!provider_ptr.is_null());
+
+        let api_ptr = connection.get_api() as *const ServerApi;
+        assert!(!api_ptr.is_null());
+
+        let metadata_ptr = connection.get_metadata_store() as *const LocalStore;
+        assert!(!metadata_ptr.is_null());
     }
 
     /// Test membership lookup by group_id
@@ -714,7 +719,7 @@ mod tests {
         // === Setup: Alice creates a group and invites Bob ===
         let alice_storage = temp_dir.path().join("alice");
         std::fs::create_dir_all(&alice_storage).unwrap();
-        let alice_provider = MlsProvider::new(&alice_storage.join("mls.db")).unwrap();
+        let alice_provider = MlsProvider::new(alice_storage.join("mls.db")).unwrap();
 
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
         let mut alice_group = crypto::create_group_with_config(
@@ -802,7 +807,7 @@ mod tests {
         // === Setup: Alice and Bob in a group ===
         let alice_storage = temp_dir.path().join("alice");
         std::fs::create_dir_all(&alice_storage).unwrap();
-        let alice_provider = MlsProvider::new(&alice_storage.join("mls.db")).unwrap();
+        let alice_provider = MlsProvider::new(alice_storage.join("mls.db")).unwrap();
 
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
         let mut alice_group = crypto::create_group_with_config(
@@ -898,7 +903,7 @@ mod tests {
         // === Setup: Alice, Bob, then Alice adds Carol ===
         let alice_storage = temp_dir.path().join("alice");
         std::fs::create_dir_all(&alice_storage).unwrap();
-        let alice_provider = MlsProvider::new(&alice_storage.join("mls.db")).unwrap();
+        let alice_provider = MlsProvider::new(alice_storage.join("mls.db")).unwrap();
 
         let (alice_cred, alice_key) = crypto::generate_credential_with_key("alice").unwrap();
         let mut alice_group = crypto::create_group_with_config(
