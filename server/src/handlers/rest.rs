@@ -28,6 +28,48 @@ struct UploadKeyPackagesResponse {
     pool_size: usize,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct ReserveKeyPackageRequest {
+    target_username: String,
+    reserved_by: String,
+    group_id: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ReserveKeyPackageResponse {
+    keypackage_ref: String,
+    keypackage: String,
+    reservation_id: String,
+    reservation_expires_at: i64,
+    not_after: i64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SpendKeyPackageRequest {
+    keypackage_ref: String,
+    group_id: String,
+    spent_by: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct SpendKeyPackageResponse {
+    spent: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct KeyPackageStatusResponse {
+    username: String,
+    available: usize,
+    reserved: usize,
+    spent: usize,
+    expired: usize,
+    total: usize,
+    expiring_soon: usize,
+    pool_health: String,
+    recommended_action: Option<String>,
+    last_upload: Option<String>,
+}
+
 /// Register a new user with their key package
 /// POST /users
 pub async fn register_user(
@@ -238,4 +280,204 @@ pub async fn upload_key_packages(
         rejected,
         pool_size,
     }))
+}
+
+/// Reserve a KeyPackage for an invitation
+/// POST /keypackages/reserve
+pub async fn reserve_key_package(
+    pool: web::Data<DbPool>,
+    config: web::Data<crate::handlers::ServerConfig>,
+    req: web::Json<ReserveKeyPackageRequest>,
+) -> ActixResult<HttpResponse> {
+    let group_id_bytes = match general_purpose::STANDARD.decode(&req.group_id) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            return Ok(HttpResponse::BadRequest().json(json!({
+                "error": format!("Invalid group_id: {}", err)
+            })));
+        }
+    };
+
+    match KeyPackageStore::reserve_key_package_with_timeout(
+        &pool,
+        &req.target_username,
+        &group_id_bytes,
+        &req.reserved_by,
+        config.reservation_timeout_seconds,
+    )
+    .await
+    {
+        Ok(Some(reserved)) => {
+            let response = ReserveKeyPackageResponse {
+                keypackage_ref: general_purpose::STANDARD.encode(&reserved.keypackage_ref),
+                keypackage: general_purpose::STANDARD.encode(&reserved.keypackage_bytes),
+                reservation_id: reserved.reservation_id,
+                reservation_expires_at: reserved.reservation_expires_at,
+                not_after: reserved.not_after,
+            };
+
+            Ok(HttpResponse::Ok().json(response))
+        }
+        Ok(None) => Ok(HttpResponse::NotFound().json(json!({
+            "error": "No available KeyPackage for target user"
+        }))),
+        Err(err) => {
+            log::error!(
+                "Failed to reserve keypackage for {}: {}",
+                req.target_username,
+                err
+            );
+            Ok(HttpResponse::InternalServerError().json(json!({
+                "error": "Failed to reserve keypackage"
+            })))
+        }
+    }
+}
+
+/// Mark a reserved KeyPackage as spent
+/// POST /keypackages/spend
+pub async fn spend_key_package(
+    pool: web::Data<DbPool>,
+    req: web::Json<SpendKeyPackageRequest>,
+) -> ActixResult<HttpResponse> {
+    let keypackage_ref = match general_purpose::STANDARD.decode(&req.keypackage_ref) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            return Ok(HttpResponse::BadRequest().json(json!({
+                "error": format!("Invalid keypackage_ref: {}", err)
+            })));
+        }
+    };
+
+    let group_id = match general_purpose::STANDARD.decode(&req.group_id) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            return Ok(HttpResponse::BadRequest().json(json!({
+                "error": format!("Invalid group_id: {}", err)
+            })));
+        }
+    };
+
+    match KeyPackageStore::spend_key_package(&pool, &keypackage_ref, &group_id, &req.spent_by).await
+    {
+        Ok(()) => Ok(HttpResponse::Ok().json(SpendKeyPackageResponse { spent: true })),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(HttpResponse::NotFound().json(json!({
+            "error": "KeyPackage not found"
+        }))),
+        Err(rusqlite::Error::ExecuteReturnedResults) => Ok(HttpResponse::Conflict().json(json!({
+            "error": "KeyPackage already spent"
+        }))),
+        Err(err) => {
+            log::error!("Failed to spend keypackage: {}", err);
+            Ok(HttpResponse::InternalServerError().json(json!({
+                "error": "Failed to spend keypackage"
+            })))
+        }
+    }
+}
+
+/// Get aggregate status for a user's KeyPackage pool
+/// GET /keypackages/status/{username}
+pub async fn get_keypackage_status(
+    pool: web::Data<DbPool>,
+    username: web::Path<String>,
+) -> ActixResult<HttpResponse> {
+    use rusqlite::OptionalExtension;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let expiring_threshold = now + 172_800; // 48 hours
+
+    let conn = pool.lock().await;
+
+    let available: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM keypackages WHERE username = ?1 AND status = 'available' AND not_after > ?2",
+            (&username.as_str(), now),
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let reserved: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM keypackages WHERE username = ?1 AND status = 'reserved'",
+            (&username.as_str(),),
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let spent: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM keypackages WHERE username = ?1 AND status = 'spent'",
+            (&username.as_str(),),
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let expired: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM keypackages WHERE username = ?1 AND not_after <= ?2",
+            (&username.as_str(), now),
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let expiring_soon: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM keypackages WHERE username = ?1 AND status = 'available' AND not_after BETWEEN ?2 AND ?3",
+            (&username.as_str(), now, expiring_threshold),
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let last_upload: Option<i64> = conn
+        .query_row(
+            "SELECT MAX(uploaded_at) FROM keypackages WHERE username = ?1",
+            (&username.as_str(),),
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap_or(None);
+
+    drop(conn);
+
+    let total = (available + reserved + spent) as usize;
+
+    let pool_health = if available == 0 {
+        "empty"
+    } else if available < 8 {
+        "low"
+    } else {
+        "healthy"
+    };
+
+    let recommended_action = if available == 0 {
+        Some("Upload new key packages immediately".to_string())
+    } else if available < 8 {
+        Some("Replenish key package pool".to_string())
+    } else {
+        None
+    };
+
+    let last_upload_str = last_upload
+        .and_then(|ts| chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0))
+        .map(|dt| dt.to_rfc3339());
+
+    let response = KeyPackageStatusResponse {
+        username: username.into_inner(),
+        available: available as usize,
+        reserved: reserved as usize,
+        spent: spent as usize,
+        expired: expired as usize,
+        total,
+        expiring_soon: expiring_soon as usize,
+        pool_health: pool_health.to_string(),
+        recommended_action,
+        last_upload: last_upload_str,
+    };
+
+    Ok(HttpResponse::Ok().json(response))
 }

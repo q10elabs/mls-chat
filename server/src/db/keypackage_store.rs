@@ -232,6 +232,18 @@ impl KeyPackageStore {
         group_id: &[u8],
         reserved_by: &str,
     ) -> SqliteResult<Option<ReservedKeyPackage>> {
+        Self::reserve_key_package_with_timeout(pool, target_username, group_id, reserved_by, RESERVATION_TTL_SECONDS).await
+    }
+
+    /// Reserve a KeyPackage with a custom timeout (in seconds)
+    /// Returns ReservedKeyPackage or None if no available keys
+    pub async fn reserve_key_package_with_timeout(
+        pool: &DbPool,
+        target_username: &str,
+        group_id: &[u8],
+        reserved_by: &str,
+        timeout_seconds: i64,
+    ) -> SqliteResult<Option<ReservedKeyPackage>> {
         let conn = pool.lock().await;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -266,7 +278,7 @@ impl KeyPackageStore {
         if let Some((keypackage_ref, keypackage_bytes, not_after)) = result {
             // Generate reservation ID and expiry
             let reservation_id = Uuid::new_v4().to_string();
-            let reservation_expires_at = now + RESERVATION_TTL_SECONDS;
+            let reservation_expires_at = now + timeout_seconds;
 
             // Update to reserved status
             conn.execute(

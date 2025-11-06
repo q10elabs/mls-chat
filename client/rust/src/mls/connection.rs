@@ -801,6 +801,7 @@ impl MlsConnection {
                 user,
                 &self.mls_provider,
                 &self.api,
+                &self.metadata_store,
                 websocket,
             )
             .await

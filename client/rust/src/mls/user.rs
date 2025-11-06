@@ -21,7 +21,7 @@
 //!
 //! // Passed to memberships for group operations
 //! membership.send_message(text, &user);
-//! membership.invite_user(invitee, &user);
+//! membership.invite_user(invitee, &user, provider, api, store, websocket);
 //! ```
 
 use crate::models::Identity;

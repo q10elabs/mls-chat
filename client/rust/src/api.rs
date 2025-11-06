@@ -1,12 +1,17 @@
 //! Server API client for REST endpoints
+//!
+//! Provides helpers for user registration, KeyPackage uploads, pool
+//! reservation/spend flows, and health/status queries against the MLS
+//! chat server.
 
-use crate::error::{NetworkError, Result};
+use crate::error::{KeyPackageError, NetworkError, Result};
 use base64::{engine::general_purpose, Engine as _};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Server API client
+#[derive(Clone)]
 pub struct ServerApi {
     client: Client,
     base_url: String,
@@ -26,6 +31,36 @@ pub struct UploadKeyPackagesResponse {
     pub accepted: usize,
     pub rejected: Vec<String>,
     pub pool_size: usize,
+}
+
+/// Reserved KeyPackage details returned when the server grants a reservation
+#[derive(Debug, Clone)]
+pub struct ReservedKeyPackage {
+    pub keypackage_ref: Vec<u8>,
+    pub keypackage: Vec<u8>,
+    pub reservation_id: String,
+    pub reservation_expires_at: i64,
+    pub not_after: i64,
+}
+
+/// Aggregate pool status information returned by the server
+#[derive(Debug, Clone, Deserialize)]
+pub struct KeyPackagePoolStatus {
+    pub available: usize,
+    pub reserved: usize,
+    #[serde(default)]
+    pub spent: usize,
+    #[serde(default)]
+    pub expired: usize,
+    pub total: usize,
+    #[serde(default)]
+    pub expiring_soon: usize,
+    #[serde(default)]
+    pub pool_health: Option<String>,
+    #[serde(default)]
+    pub recommended_action: Option<String>,
+    #[serde(default)]
+    pub last_upload: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -217,6 +252,155 @@ impl ServerApi {
             Ok(parsed)
         } else {
             Err(NetworkError::Server(format!("Upload failed: {}", response.status())).into())
+        }
+    }
+
+    /// Reserve a KeyPackage for inviting `target_username` into `group_id`
+    pub async fn reserve_key_package(
+        &self,
+        target_username: &str,
+        group_id: &[u8],
+        reserved_by: &str,
+    ) -> Result<ReservedKeyPackage> {
+        #[derive(Serialize)]
+        struct ReserveRequest<'a> {
+            target_username: &'a str,
+            reserved_by: &'a str,
+            group_id: String,
+        }
+
+        #[derive(Deserialize)]
+        struct ReserveResponse {
+            keypackage_ref: String,
+            keypackage: String,
+            reservation_id: String,
+            reservation_expires_at: i64,
+            not_after: i64,
+        }
+
+        let request = ReserveRequest {
+            target_username,
+            reserved_by,
+            group_id: general_purpose::STANDARD.encode(group_id),
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/keypackages/reserve", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        match response.status() {
+            status if status.is_success() => {
+                let payload: ReserveResponse = response.json().await.map_err(|e| {
+                    NetworkError::KeyPackage(KeyPackageError::InvalidResponse {
+                        message: format!("Failed to parse reserve response: {}", e),
+                    })
+                })?;
+
+                let keypackage_ref = general_purpose::STANDARD
+                    .decode(payload.keypackage_ref)
+                    .map_err(|e| {
+                        NetworkError::KeyPackage(KeyPackageError::InvalidResponse {
+                            message: format!("Invalid keypackage_ref in reserve response: {}", e),
+                        })
+                    })?;
+
+                let keypackage = general_purpose::STANDARD
+                    .decode(payload.keypackage)
+                    .map_err(|e| {
+                        NetworkError::KeyPackage(KeyPackageError::InvalidResponse {
+                            message: format!("Invalid keypackage payload: {}", e),
+                        })
+                    })?;
+
+                Ok(ReservedKeyPackage {
+                    keypackage_ref,
+                    keypackage,
+                    reservation_id: payload.reservation_id,
+                    reservation_expires_at: payload.reservation_expires_at,
+                    not_after: payload.not_after,
+                })
+            }
+            StatusCode::NOT_FOUND => Err(NetworkError::KeyPackage(
+                KeyPackageError::PoolExhausted {
+                    username: target_username.to_string(),
+                }
+            )
+            .into()),
+            status => Err(NetworkError::KeyPackage(KeyPackageError::ServerError {
+                message: format!("Failed to reserve key package: {}", status),
+            })
+            .into()),
+        }
+    }
+
+    /// Mark a reserved KeyPackage as spent on the server
+    pub async fn spend_key_package(
+        &self,
+        keypackage_ref: &[u8],
+        group_id: &[u8],
+        spent_by: &str,
+    ) -> Result<()> {
+        #[derive(Serialize)]
+        struct SpendRequest<'a> {
+            keypackage_ref: String,
+            group_id: String,
+            spent_by: &'a str,
+        }
+
+        let request = SpendRequest {
+            keypackage_ref: general_purpose::STANDARD.encode(keypackage_ref),
+            group_id: general_purpose::STANDARD.encode(group_id),
+            spent_by,
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/keypackages/spend", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        match response.status() {
+            status if status.is_success() => Ok(()),
+            StatusCode::CONFLICT => Err(NetworkError::KeyPackage(
+                KeyPackageError::DoubleSpendAttempted {
+                    keypackage_ref: keypackage_ref.to_vec(),
+                }
+            )
+            .into()),
+            StatusCode::NOT_FOUND => Err(NetworkError::KeyPackage(
+                KeyPackageError::InvalidKeyPackageRef {
+                    keypackage_ref: keypackage_ref.to_vec(),
+                }
+            )
+            .into()),
+            status => Err(NetworkError::KeyPackage(KeyPackageError::ServerError {
+                message: format!("Failed to spend key package: {}", status),
+            })
+            .into()),
+        }
+    }
+
+    /// Fetch aggregate KeyPackage pool status for `username`
+    pub async fn get_key_package_status(&self, username: &str) -> Result<KeyPackagePoolStatus> {
+        let response = self
+            .client
+            .get(format!("{}/keypackages/status/{}", self.base_url, username))
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let status: KeyPackagePoolStatus = response.json().await?;
+            Ok(status)
+        } else {
+            Err(NetworkError::Server(format!(
+                "Failed to fetch pool status: {}",
+                response.status()
+            ))
+            .into())
         }
     }
 }

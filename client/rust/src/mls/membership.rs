@@ -32,7 +32,8 @@
 //!
 //! // Operations require service parameters
 //! membership.send_message(text, &user, &provider, &api, &websocket).await?;
-//! membership.invite_user(invitee, &user, &provider, &api, &websocket).await?;
+//! membership.invite_user(invitee, &user, &provider, &api, &store, &websocket)
+//!     .await?;
 //! ```
 
 use crate::api::ServerApi;
@@ -462,17 +463,18 @@ impl<'a> MlsMembership<'a> {
     /// Invite a user to the group
     ///
     /// Implements proper MLS invitation protocol:
-    /// 1. Fetches invitee's KeyPackage from server
-    /// 2. Adds them to the MLS group
-    /// 3. Exports ratchet tree
-    /// 4. Sends Welcome message directly to invitee
-    /// 5. Broadcasts Commit to existing members
+    /// 1. Reserves an invitee KeyPackage from the server (prevents double-spend)
+    /// 2. Updates local metadata with reservation details when applicable
+    /// 3. Adds the invitee to the MLS group using the reserved KeyPackage
+    /// 4. Sends Welcome and Commit messages
+    /// 5. Marks the KeyPackage as spent on the server
     ///
     /// # Arguments
     /// * `invitee_username` - Username to invite
     /// * `user` - Inviter's identity
     /// * `provider` - MLS provider for group operations
     /// * `api` - Server API for fetching KeyPackage
+    /// * `metadata_store` - Local metadata store for pool coordination
     /// * `websocket` - WebSocket for sending messages
     ///
     /// # Errors
@@ -485,18 +487,36 @@ impl<'a> MlsMembership<'a> {
         user: &MlsUser,
         provider: &MlsProvider,
         api: &ServerApi,
+        metadata_store: &LocalStore,
         websocket: &MessageHandler,
     ) -> Result<()> {
         log::info!("Inviting {} to group {}", invitee_username, self.group_name);
 
-        // Verify invitee exists by fetching their key package from server
-        let invitee_key_package_bytes = match api.get_user_key(invitee_username).await {
-            Ok(key) => key,
-            Err(e) => {
-                log::error!("Failed to fetch KeyPackage for {}: {}", invitee_username, e);
-                return Err(e);
+        // Reserve a KeyPackage for the invitee to avoid double spending
+        let reserved_package = match api
+            .reserve_key_package(invitee_username, &self.group_id, user.get_username())
+            .await
+        {
+            Ok(reservation) => reservation,
+            Err(err) => {
+                log::error!(
+                    "Failed to reserve KeyPackage for {}: {}",
+                    invitee_username,
+                    err
+                );
+                return Err(err);
             }
         };
+
+        // Update local metadata if this reservation corresponds to our pool
+        metadata_store.update_reservation_info(
+            &reserved_package.keypackage_ref,
+            &reserved_package.reservation_id,
+            user.get_username(),
+            reserved_package.reservation_expires_at,
+        )?;
+
+        let invitee_key_package_bytes = reserved_package.keypackage.clone();
 
         // Deserialize and validate the invitee's KeyPackage
         let invitee_key_package_in = openmls::key_packages::KeyPackageIn::tls_deserialize(
@@ -583,6 +603,20 @@ impl<'a> MlsMembership<'a> {
 
         websocket.send_envelope(&commit_envelope).await?;
         log::info!("Broadcast Commit message to existing members");
+
+        // Mark the reserved KeyPackage as spent on the server and update metadata
+        api.spend_key_package(
+            &reserved_package.keypackage_ref,
+            &self.group_id,
+            user.get_username(),
+        )
+        .await?;
+
+        metadata_store.mark_spent(
+            &reserved_package.keypackage_ref,
+            user.get_username(),
+            &self.group_id,
+        )?;
 
         Ok(())
     }

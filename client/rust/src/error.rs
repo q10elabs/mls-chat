@@ -75,6 +75,34 @@ pub enum NetworkError {
 
     #[error("Connection timeout")]
     Timeout,
+
+    #[error("KeyPackage error: {0}")]
+    KeyPackage(#[from] KeyPackageError),
+}
+
+/// KeyPackage pool operation errors
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum KeyPackageError {
+    #[error("No available KeyPackage for user '{username}'")]
+    PoolExhausted { username: String },
+
+    #[error("KeyPackage has expired (ref: {keypackage_ref:?})")]
+    KeyPackageExpired { keypackage_ref: Vec<u8> },
+
+    #[error("KeyPackage already spent (ref: {keypackage_ref:?})")]
+    DoubleSpendAttempted { keypackage_ref: Vec<u8> },
+
+    #[error("Reservation has expired (reservation_id: {reservation_id})")]
+    ReservationExpired { reservation_id: String },
+
+    #[error("KeyPackage not found (ref: {keypackage_ref:?})")]
+    InvalidKeyPackageRef { keypackage_ref: Vec<u8> },
+
+    #[error("Server error: {message}")]
+    ServerError { message: String },
+
+    #[error("Invalid response from server: {message}")]
+    InvalidResponse { message: String },
 }
 
 /// MLS protocol errors

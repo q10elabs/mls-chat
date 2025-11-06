@@ -18,6 +18,10 @@ pub struct Config {
     /// PID file path (optional) - write server PID to this file on startup
     #[arg(long)]
     pub pidfile: Option<PathBuf>,
+
+    /// KeyPackage reservation timeout in seconds (default: 60)
+    #[arg(long, default_value = "60")]
+    pub reservation_timeout_seconds: i64,
 }
 
 impl Config {
@@ -37,9 +41,11 @@ mod tests {
             port: 4000,
             database: PathBuf::from("chatserver.db"),
             pidfile: None,
+            reservation_timeout_seconds: 60,
         };
         assert_eq!(config.port, 4000);
         assert_eq!(config.database.to_str().unwrap(), "chatserver.db");
+        assert_eq!(config.reservation_timeout_seconds, 60);
     }
 
     #[test]
@@ -48,6 +54,7 @@ mod tests {
             port: 8080,
             database: PathBuf::from("chatserver.db"),
             pidfile: None,
+            reservation_timeout_seconds: 60,
         };
         assert_eq!(config.port, 8080);
     }
@@ -58,6 +65,7 @@ mod tests {
             port: 4000,
             database: PathBuf::from("/tmp/custom.db"),
             pidfile: None,
+            reservation_timeout_seconds: 60,
         };
         assert_eq!(config.database.to_str().unwrap(), "/tmp/custom.db");
     }

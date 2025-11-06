@@ -1,7 +1,7 @@
 use crate::db::DbPool;
 use crate::handlers::{
-    get_backup, get_user_key, health, register_user, store_backup, upload_key_packages, ws_connect,
-    WsServer,
+    get_backup, get_keypackage_status, get_user_key, health, register_user, reserve_key_package,
+    spend_key_package, store_backup, upload_key_packages, ws_connect, ServerConfig, WsServer,
 };
 /// HTTP server factory and configuration.
 /// Provides a reusable function to create and configure the HTTP server
@@ -11,33 +11,38 @@ use std::sync::Arc;
 
 /// Create a configured HTTP server
 ///
-/// Takes a database pool, WebSocket server, and bind address, then returns a
-/// fully configured `HttpServer` ready to be run.
+/// Takes a database pool, WebSocket server, server config, and bind address,
+/// then returns a fully configured `HttpServer` ready to be run.
 ///
 /// # Arguments
 /// * `pool` - Database connection pool wrapped in web::Data
 /// * `ws_server` - WebSocket server instance wrapped in web::Data
+/// * `server_config` - Server configuration (e.g., reservation timeout)
 /// * `bind_addr` - Address to bind the server to (e.g., "127.0.0.1:4000")
 ///
 /// # Example
 /// ```ignore
 /// let pool = web::Data::new(db::create_pool("chatserver.db")?);
 /// let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
-/// let server = server::create_http_server(pool, ws_server, "127.0.0.1:4000")?;
+/// let config = web::Data::new(ServerConfig::default());
+/// let server = server::create_http_server(pool, ws_server, config, "127.0.0.1:4000")?;
 /// server.run().await?;
 /// ```
 pub fn create_http_server(
     pool: web::Data<DbPool>,
     ws_server: web::Data<WsServer>,
+    server_config: web::Data<ServerConfig>,
     bind_addr: &str,
 ) -> std::io::Result<actix_web::dev::Server> {
     let pool_clone = pool.clone();
     let ws_server_clone = ws_server.clone();
+    let config_clone = server_config.clone();
 
     let server = HttpServer::new(move || {
         App::new()
             .app_data(pool_clone.clone())
             .app_data(ws_server_clone.clone())
+            .app_data(config_clone.clone())
             .wrap(middleware::Logger::default())
             // REST endpoints
             .route("/health", web::get().to(health))
@@ -46,6 +51,12 @@ pub fn create_http_server(
             .route("/backup/{username}", web::post().to(store_backup))
             .route("/backup/{username}", web::get().to(get_backup))
             .route("/keypackages/upload", web::post().to(upload_key_packages))
+            .route("/keypackages/reserve", web::post().to(reserve_key_package))
+            .route("/keypackages/spend", web::post().to(spend_key_package))
+            .route(
+                "/keypackages/status/{username}",
+                web::get().to(get_keypackage_status),
+            )
             // WebSocket endpoint
             .route("/ws/{username}", web::get().to(ws_connect))
     })
@@ -88,16 +99,19 @@ pub fn create_test_http_server_with_pool(
     pool: web::Data<DbPool>,
 ) -> std::io::Result<(actix_web::dev::Server, String)> {
     let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
+    let server_config = web::Data::new(ServerConfig::default());
 
     // Bind to 127.0.0.1:0 to get a random available port
     let bind_addr = "127.0.0.1:0";
     let pool_clone = pool.clone();
     let ws_server_clone = ws_server.clone();
+    let config_clone = server_config.clone();
 
     let server = HttpServer::new(move || {
         App::new()
             .app_data(pool_clone.clone())
             .app_data(ws_server_clone.clone())
+            .app_data(config_clone.clone())
             .wrap(middleware::Logger::default())
             // REST endpoints
             .route("/health", web::get().to(health))
@@ -106,6 +120,12 @@ pub fn create_test_http_server_with_pool(
             .route("/backup/{username}", web::post().to(store_backup))
             .route("/backup/{username}", web::get().to(get_backup))
             .route("/keypackages/upload", web::post().to(upload_key_packages))
+            .route("/keypackages/reserve", web::post().to(reserve_key_package))
+            .route("/keypackages/spend", web::post().to(spend_key_package))
+            .route(
+                "/keypackages/status/{username}",
+                web::get().to(get_keypackage_status),
+            )
             // WebSocket endpoint
             .route("/ws/{username}", web::get().to(ws_connect))
     })
@@ -152,8 +172,9 @@ mod tests {
     async fn test_create_http_server_with_test_pool() {
         let pool = web::Data::new(crate::db::create_test_pool());
         let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
+        let server_config = web::Data::new(ServerConfig::default());
 
-        let result = create_http_server(pool, ws_server, "127.0.0.1:0");
+        let result = create_http_server(pool, ws_server, server_config, "127.0.0.1:0");
         assert!(result.is_ok(), "create_http_server should succeed");
     }
 
@@ -161,9 +182,10 @@ mod tests {
     async fn test_create_http_server_invalid_address() {
         let pool = web::Data::new(crate::db::create_test_pool());
         let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
+        let server_config = web::Data::new(ServerConfig::default());
 
         // Try to bind to an invalid address
-        let result = create_http_server(pool, ws_server, "invalid_address:99999");
+        let result = create_http_server(pool, ws_server, server_config, "invalid_address:99999");
         assert!(
             result.is_err(),
             "create_http_server should fail with invalid address"
@@ -256,11 +278,13 @@ mod tests {
     async fn test_health_endpoint() {
         let pool = web::Data::new(crate::db::create_test_pool());
         let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
+        let server_config = web::Data::new(ServerConfig::default());
 
         let app = test::init_service(
             App::new()
                 .app_data(pool)
                 .app_data(ws_server)
+                .app_data(server_config)
                 .wrap(middleware::Logger::default())
                 // REST endpoints
                 .route("/health", web::get().to(health))
@@ -283,11 +307,13 @@ mod tests {
     async fn test_register_user_endpoint() {
         let pool = web::Data::new(crate::db::create_test_pool());
         let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
+        let server_config = web::Data::new(ServerConfig::default());
 
         let app = test::init_service(
             App::new()
                 .app_data(pool)
                 .app_data(ws_server)
+                .app_data(server_config)
                 .wrap(middleware::Logger::default())
                 // REST endpoints
                 .route("/health", web::get().to(health))
@@ -318,6 +344,7 @@ mod tests {
     async fn test_get_user_key_endpoint() {
         let pool = web::Data::new(crate::db::create_test_pool());
         let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
+        let server_config = web::Data::new(ServerConfig::default());
 
         // First register a user
         let key_package = vec![0x21, 0x22, 0x23, 0x24];
@@ -329,6 +356,7 @@ mod tests {
             App::new()
                 .app_data(pool)
                 .app_data(ws_server)
+                .app_data(server_config)
                 .wrap(middleware::Logger::default())
                 // REST endpoints
                 .route("/health", web::get().to(health))
@@ -351,11 +379,13 @@ mod tests {
     async fn test_get_nonexistent_user_returns_404() {
         let pool = web::Data::new(crate::db::create_test_pool());
         let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
+        let server_config = web::Data::new(ServerConfig::default());
 
         let app = test::init_service(
             App::new()
                 .app_data(pool)
                 .app_data(ws_server)
+                .app_data(server_config)
                 .wrap(middleware::Logger::default())
                 // REST endpoints
                 .route("/health", web::get().to(health))
@@ -380,6 +410,7 @@ mod tests {
     async fn test_store_and_get_backup_endpoints() {
         let pool = web::Data::new(crate::db::create_test_pool());
         let ws_server = web::Data::new(WsServer::new(Arc::new(pool.clone())));
+        let server_config = web::Data::new(ServerConfig::default());
 
         // First register a user
         let key_package = vec![0x25, 0x26, 0x27, 0x28];
@@ -391,6 +422,7 @@ mod tests {
             App::new()
                 .app_data(pool)
                 .app_data(ws_server)
+                .app_data(server_config)
                 .wrap(middleware::Logger::default())
                 // REST endpoints
                 .route("/health", web::get().to(health))
