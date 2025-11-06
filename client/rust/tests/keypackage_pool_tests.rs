@@ -61,8 +61,10 @@ async fn generate_and_update_pool_creates_entries() {
 #[tokio::test]
 async fn generate_and_update_pool_enforces_hard_cap() {
     let (store, _temp) = setup_store();
-    let mut config = KeyPackagePoolConfig::default();
-    config.hard_cap = 2;
+    let config = KeyPackagePoolConfig {
+        hard_cap: 2,
+        ..Default::default()
+    };
     let pool = KeyPackagePool::new("alice", config, &store);
     let provider = MlsProvider::new_in_memory().unwrap();
     let (credential, signer) = generate_credential_with_key("alice").unwrap();
@@ -81,8 +83,10 @@ async fn generate_and_update_pool_enforces_hard_cap() {
 #[test]
 fn should_replenish_logic() {
     let (store, _temp) = setup_store();
-    let mut config = KeyPackagePoolConfig::default();
-    config.low_watermark = 2;
+    let config = KeyPackagePoolConfig {
+        low_watermark: 2,
+        ..Default::default()
+    };
     let pool = KeyPackagePool::new("alice", config, &store);
 
     store.create_pool_metadata(b"ref1", 2_000_000).unwrap();
@@ -103,8 +107,10 @@ fn should_replenish_logic() {
 #[test]
 fn get_replenishment_needed() {
     let (store, _temp) = setup_store();
-    let mut config = KeyPackagePoolConfig::default();
-    config.target_pool_size = 5;
+    let config = KeyPackagePoolConfig {
+        target_pool_size: 5,
+        ..Default::default()
+    };
     let pool = KeyPackagePool::new("alice", config, &store);
 
     for i in 0..3 {
@@ -178,8 +184,10 @@ async fn cleanup_expired_removes_entries() {
 #[test]
 fn status_totals_property() {
     let (store, _temp) = setup_store();
-    let mut config = KeyPackagePoolConfig::default();
-    config.low_watermark = 1;
+    let config = KeyPackagePoolConfig {
+        low_watermark: 1,
+        ..Default::default()
+    };
     let pool = KeyPackagePool::new("alice", config, &store);
 
     let statuses = ["created", "available", "reserved", "spent", "expired"];

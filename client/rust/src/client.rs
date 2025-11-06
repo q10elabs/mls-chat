@@ -86,15 +86,20 @@ impl MlsClient {
 
     /// Initialize the client (load or create identity, register with server)
     ///
-    /// Delegates to MlsConnection to create user identity and register with server.
+    /// Delegates to MlsConnection to create user identity and register with the
+    /// server, then performs an immediate KeyPackage pool refresh so the server
+    /// has inventory available for upcoming invitations.
     ///
     /// # Errors
     /// * Storage errors when loading/saving identity
     /// * Network errors when registering with server
+    /// * Network errors during the initial pool refresh/upload
     /// * Crypto errors when generating credentials or key packages
     pub async fn initialize(&mut self) -> Result<()> {
         log::info!("Initializing MlsClient");
         self.connection.initialize().await?;
+        self.connection.refresh_key_packages().await?;
+        self.update_refresh_time();
         Ok(())
     }
 

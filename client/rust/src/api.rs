@@ -323,12 +323,12 @@ impl ServerApi {
                     not_after: payload.not_after,
                 })
             }
-            StatusCode::NOT_FOUND => Err(NetworkError::KeyPackage(
-                KeyPackageError::PoolExhausted {
+            StatusCode::NOT_FOUND => {
+                Err(NetworkError::KeyPackage(KeyPackageError::PoolExhausted {
                     username: target_username.to_string(),
-                }
-            )
-            .into()),
+                })
+                .into())
+            }
             status => Err(NetworkError::KeyPackage(KeyPackageError::ServerError {
                 message: format!("Failed to reserve key package: {}", status),
             })
@@ -368,13 +368,13 @@ impl ServerApi {
             StatusCode::CONFLICT => Err(NetworkError::KeyPackage(
                 KeyPackageError::DoubleSpendAttempted {
                     keypackage_ref: keypackage_ref.to_vec(),
-                }
+                },
             )
             .into()),
             StatusCode::NOT_FOUND => Err(NetworkError::KeyPackage(
                 KeyPackageError::InvalidKeyPackageRef {
                     keypackage_ref: keypackage_ref.to_vec(),
-                }
+                },
             )
             .into()),
             status => Err(NetworkError::KeyPackage(KeyPackageError::ServerError {

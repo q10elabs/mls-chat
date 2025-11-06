@@ -7,8 +7,8 @@ use mls_chat_client::crypto;
 use tls_codec::Serialize;
 
 use mls_chat_server::db::{self, DbPool};
-use rusqlite::params;
 use openmls_traits::OpenMlsProvider;
+use rusqlite::params;
 
 /// Generate a KeyPackageUpload payload for testing
 fn generate_keypackage_upload(username: &str) -> KeyPackageUpload {
@@ -462,14 +462,32 @@ async fn test_concurrent_multi_inviter() {
     });
 
     // Wait for all reservations to complete
-    let reservation1 = handle1.await.expect("Join should succeed").expect("Reservation 1 should succeed");
-    let reservation2 = handle2.await.expect("Join should succeed").expect("Reservation 2 should succeed");
-    let reservation3 = handle3.await.expect("Join should succeed").expect("Reservation 3 should succeed");
+    let reservation1 = handle1
+        .await
+        .expect("Join should succeed")
+        .expect("Reservation 1 should succeed");
+    let reservation2 = handle2
+        .await
+        .expect("Join should succeed")
+        .expect("Reservation 2 should succeed");
+    let reservation3 = handle3
+        .await
+        .expect("Join should succeed")
+        .expect("Reservation 3 should succeed");
 
     // Verify each inviter got a unique KeyPackage
-    assert_ne!(reservation1.keypackage_ref, reservation2.keypackage_ref, "Inviter 1 and 2 should get different KeyPackages");
-    assert_ne!(reservation1.keypackage_ref, reservation3.keypackage_ref, "Inviter 1 and 3 should get different KeyPackages");
-    assert_ne!(reservation2.keypackage_ref, reservation3.keypackage_ref, "Inviter 2 and 3 should get different KeyPackages");
+    assert_ne!(
+        reservation1.keypackage_ref, reservation2.keypackage_ref,
+        "Inviter 1 and 2 should get different KeyPackages"
+    );
+    assert_ne!(
+        reservation1.keypackage_ref, reservation3.keypackage_ref,
+        "Inviter 1 and 3 should get different KeyPackages"
+    );
+    assert_ne!(
+        reservation2.keypackage_ref, reservation3.keypackage_ref,
+        "Inviter 2 and 3 should get different KeyPackages"
+    );
 
     // Verify each reservation has a unique ID
     assert_ne!(reservation1.reservation_id, reservation2.reservation_id);
@@ -482,7 +500,10 @@ async fn test_concurrent_multi_inviter() {
         .await
         .expect("Status should be available");
     assert_eq!(status.reserved, 3, "All 3 KeyPackages should be reserved");
-    assert_eq!(status.available, 0, "No KeyPackages should remain available");
+    assert_eq!(
+        status.available, 0,
+        "No KeyPackages should remain available"
+    );
 }
 
 #[tokio::test]
@@ -493,10 +514,14 @@ async fn test_structured_error_types() {
     let api = ServerApi::new(&format!("http://{}", addr));
 
     // Test PoolExhausted error
-    let result = api.reserve_key_package("no-keys", &[0x01, 0x02], "inviter").await;
+    let result = api
+        .reserve_key_package("no-keys", &[0x01, 0x02], "inviter")
+        .await;
     assert!(result.is_err());
     match result.err().unwrap() {
-        ClientError::Network(NetworkError::KeyPackage(KeyPackageError::PoolExhausted { username })) => {
+        ClientError::Network(NetworkError::KeyPackage(KeyPackageError::PoolExhausted {
+            username,
+        })) => {
             assert_eq!(username, "no-keys");
         }
         other => panic!("Expected PoolExhausted error, got: {:?}", other),
@@ -504,18 +529,29 @@ async fn test_structured_error_types() {
 
     // Upload and reserve a KeyPackage
     let upload = vec![generate_keypackage_upload("error-test")];
-    api.upload_key_packages("error-test", &upload).await.expect("Upload should succeed");
+    api.upload_key_packages("error-test", &upload)
+        .await
+        .expect("Upload should succeed");
 
     let group_id = vec![0x01, 0x02];
-    let reservation = api.reserve_key_package("error-test", &group_id, "inviter").await.expect("Reservation should succeed");
+    let reservation = api
+        .reserve_key_package("error-test", &group_id, "inviter")
+        .await
+        .expect("Reservation should succeed");
 
     // Test DoubleSpendAttempted error
-    api.spend_key_package(&reservation.keypackage_ref, &group_id, "inviter").await.expect("First spend should succeed");
+    api.spend_key_package(&reservation.keypackage_ref, &group_id, "inviter")
+        .await
+        .expect("First spend should succeed");
 
-    let result = api.spend_key_package(&reservation.keypackage_ref, &group_id, "inviter").await;
+    let result = api
+        .spend_key_package(&reservation.keypackage_ref, &group_id, "inviter")
+        .await;
     assert!(result.is_err());
     match result.err().unwrap() {
-        ClientError::Network(NetworkError::KeyPackage(KeyPackageError::DoubleSpendAttempted { keypackage_ref })) => {
+        ClientError::Network(NetworkError::KeyPackage(KeyPackageError::DoubleSpendAttempted {
+            keypackage_ref,
+        })) => {
             assert_eq!(keypackage_ref, reservation.keypackage_ref);
         }
         other => panic!("Expected DoubleSpendAttempted error, got: {:?}", other),
@@ -526,7 +562,9 @@ async fn test_structured_error_types() {
     let result = api.spend_key_package(&fake_ref, &group_id, "inviter").await;
     assert!(result.is_err());
     match result.err().unwrap() {
-        ClientError::Network(NetworkError::KeyPackage(KeyPackageError::InvalidKeyPackageRef { keypackage_ref })) => {
+        ClientError::Network(NetworkError::KeyPackage(KeyPackageError::InvalidKeyPackageRef {
+            keypackage_ref,
+        })) => {
             assert_eq!(keypackage_ref, fake_ref);
         }
         other => panic!("Expected InvalidKeyPackageRef error, got: {:?}", other),

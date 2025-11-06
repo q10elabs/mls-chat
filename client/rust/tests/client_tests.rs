@@ -249,10 +249,11 @@ async fn refresh_key_packages_generates_and_uploads() {
     )
     .expect("Failed to create client");
 
-    let mut config = KeyPackagePoolConfig::default();
-    config.target_pool_size = 2;
-    config.low_watermark = 1;
-    config.hard_cap = 4;
+    let config = KeyPackagePoolConfig {
+        target_pool_size: 2,
+        low_watermark: 1,
+        hard_cap: 4,
+    };
     client.set_keypackage_pool_config(config.clone());
 
     client
@@ -659,6 +660,44 @@ async fn test_sender_skips_own_application_message() {
     server_handle.abort();
 }
 
+/// Integration Test 8: Initialization seeds KeyPackage pool on the server
+///
+/// Ensures that calling `initialize()` immediately uploads enough
+/// KeyPackages so subsequent invitations do not exhaust the pool.
+#[tokio::test]
+async fn test_initialize_seeds_keypackage_pool() {
+    let (server, addr) = create_test_server().await;
+    let server_handle = tokio::spawn(server);
+
+    let (mut client, _temp_dir) =
+        create_client_with_server(&format!("http://{}", addr), "seed_user", "seed_group");
+
+    client
+        .initialize()
+        .await
+        .expect("Failed to initialize seed_user");
+
+    // Give the async upload a moment to complete.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let status = client
+        .get_api()
+        .get_key_package_status("seed_user")
+        .await
+        .expect("Failed to fetch keypackage status");
+
+    assert!(
+        status.available >= 1,
+        "Initialization should seed at least one available keypackage"
+    );
+    assert!(
+        status.total >= status.available,
+        "Total keypackages should be at least the number available"
+    );
+
+    server_handle.abort();
+}
+
 // ==================== Phase 2.5: Periodic Refresh Tests ====================
 
 /// Test: should_refresh() returns true when no refresh has occurred yet
@@ -785,10 +824,7 @@ async fn test_should_refresh_multiple_cycles() {
     client.set_refresh_period(Duration::from_millis(500));
 
     // First cycle: should refresh immediately
-    assert!(
-        client.should_refresh(),
-        "First call should return true"
-    );
+    assert!(client.should_refresh(), "First call should return true");
     client.update_refresh_time();
 
     // Should not refresh immediately after update
