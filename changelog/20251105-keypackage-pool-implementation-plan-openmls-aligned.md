@@ -841,17 +841,409 @@ Spend:
 
 ---
 
+## Phase 2.7: Server-Side KeyPackage Expiry Cleanup Task
+
+**Rationale:** Implement automatic periodic cleanup of expired KeyPackages on the server to prevent database bloat and fulfill the spec requirement for "automatic cleanup".
+
+**Design Decisions:**
+
+1. **Periodic Background Task** - Cleanup runs on a timer (e.g., every 60 minutes), not on-demand
+   - Decouples cleanup from request latency
+   - Predictable resource usage
+   - Aligns with "periodically" language in strategy doc
+
+2. **CLI-Only Activation** - Cleanup task only spawns when server runs from CLI, NOT in unit tests
+   - Prevents test interference and flakiness
+   - Tests can run `cleanup_expired()` directly if needed
+   - Separates test code from production behavior
+
+3. **Graceful Error Handling** - Cleanup failures are logged but don't crash the server
+   - Ensures availability even if cleanup has issues
+   - Operators can debug via logs
+
+4. **Optional Admin Endpoint** - Future enhancement for manual cleanup triggering (not in Phase 2.7)
+
+---
+
+### Implementation Details
+
+**Files to create/modify:**
+
+- `server/src/db/cleanup_task.rs` (NEW) - Cleanup task executor
+- `server/src/db/mod.rs` (MODIFY) - Export cleanup task
+- `server/src/server.rs` (MODIFY) - Add function to start cleanup task (conditional)
+- `server/src/main.rs` (MODIFY) - Call start cleanup task during normal startup
+- `server/src/lib.rs` (MODIFY) - Re-export cleanup task startup function (for test isolation)
+- `server/src/db/keypackage_store.rs` (MODIFY - no logic changes) - Already implements cleanup_expired()
+
+**New Module: `server/src/db/cleanup_task.rs`**
+
+```rust
+/// KeyPackage expiry cleanup task
+/// Runs periodically to remove expired KeyPackages from the database.
+///
+/// This module provides:
+/// - CleanupTask configuration and executor
+/// - Periodic scheduling (default: every 60 minutes)
+/// - Graceful error handling and logging
+
+use crate::db::{keypackage_store::KeyPackageStore, DbPool};
+use std::time::Duration;
+use tokio::task::JoinHandle;
+
+/// Configuration for the cleanup task
+#[derive(Debug, Clone)]
+pub struct CleanupTaskConfig {
+    /// Interval between cleanup runs (seconds)
+    pub interval_seconds: u64,
+    /// Enable/disable the cleanup task
+    pub enabled: bool,
+}
+
+impl Default for CleanupTaskConfig {
+    fn default() -> Self {
+        Self {
+            interval_seconds: 3600,  // 60 minutes
+            enabled: true,
+        }
+    }
+}
+
+/// Start the KeyPackage cleanup task
+///
+/// Spawns a background tokio task that periodically runs KeyPackageStore::cleanup_expired().
+/// The task runs every `config.interval_seconds` seconds.
+///
+/// # Arguments
+/// * `pool` - Database connection pool
+/// * `config` - Cleanup task configuration
+///
+/// # Returns
+/// A JoinHandle for the spawned task. Drop the handle to cancel the task.
+///
+/// # Example
+/// ```ignore
+/// let config = CleanupTaskConfig::default();
+/// let handle = start_cleanup_task(pool.clone(), config);
+/// // Task runs in background
+/// // Drop handle to stop it
+/// drop(handle);
+/// ```
+pub fn start_cleanup_task(
+    pool: DbPool,
+    config: CleanupTaskConfig,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        if !config.enabled {
+            log::info!("KeyPackage cleanup task disabled");
+            return;
+        }
+
+        log::info!(
+            "KeyPackage cleanup task started (interval: {} seconds)",
+            config.interval_seconds
+        );
+
+        let interval = Duration::from_secs(config.interval_seconds);
+
+        loop {
+            tokio::time::sleep(interval).await;
+
+            match KeyPackageStore::cleanup_expired(&pool).await {
+                Ok(count) => {
+                    if count > 0 {
+                        log::info!(
+                            "KeyPackage cleanup completed: {} expired keys removed",
+                            count
+                        );
+                    } else {
+                        log::debug!("KeyPackage cleanup completed: no expired keys found");
+                    }
+                }
+                Err(e) => {
+                    log::error!("KeyPackage cleanup failed: {}", e);
+                    // Continue running despite error
+                }
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{create_test_pool, keypackage_store::KeyPackageStore};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[tokio::test]
+    async fn test_cleanup_task_config_default() {
+        let config = CleanupTaskConfig::default();
+        assert_eq!(config.interval_seconds, 3600);
+        assert!(config.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_task_can_be_disabled() {
+        let pool = create_test_pool();
+        KeyPackageStore::initialize_schema(&pool).await.unwrap();
+
+        let config = CleanupTaskConfig {
+            interval_seconds: 1,
+            enabled: false,
+        };
+
+        let handle = start_cleanup_task(pool, config);
+
+        // Give it a moment to start and check it exits immediately
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Task should be done (disabled)
+        assert!(handle.is_finished());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_task_runs_cleanup() {
+        let pool = create_test_pool();
+        KeyPackageStore::initialize_schema(&pool).await.unwrap();
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        // Add an expired key
+        KeyPackageStore::save_key_package(
+            &pool,
+            "test_user",
+            &vec![0x01, 0x02],
+            &vec![0x10, 0x20],
+            now - 100,  // Already expired
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let config = CleanupTaskConfig {
+            interval_seconds: 1,
+            enabled: true,
+        };
+
+        let _handle = start_cleanup_task(pool.clone(), config);
+
+        // Wait for task to run (interval + some buffer)
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+
+        // Verify expired key was removed
+        let result = KeyPackageStore::get_key_package(&pool, &vec![0x01, 0x02]).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none(), "Expired key should be deleted");
+    }
+}
+```
+
+**Modify: `server/src/db/mod.rs`**
+
+Add at the end of the module-level exports:
+
+```rust
+pub mod cleanup_task;
+pub use cleanup_task::{CleanupTaskConfig, start_cleanup_task};
+```
+
+**Modify: `server/src/server.rs`**
+
+Add a function to conditionally start the cleanup task:
+
+```rust
+/// Start the KeyPackage cleanup task
+///
+/// This function should be called from main.rs during normal server startup,
+/// but NOT from test setup code.
+///
+/// # Arguments
+/// * `pool` - Database connection pool
+/// * `enable_cleanup` - Whether to enable the cleanup task
+pub fn start_cleanup_task_if_enabled(
+    pool: web::Data<crate::db::DbPool>,
+    enable_cleanup: bool,
+) {
+    if enable_cleanup {
+        let cleanup_config = crate::db::CleanupTaskConfig::default();
+        let pool_inner = (*pool).clone();
+        let _cleanup_handle = crate::db::start_cleanup_task(pool_inner, cleanup_config);
+
+        // Note: We don't drop the handle here; it runs for the lifetime of the server.
+        // The tokio runtime will clean up the task when the server shuts down.
+        log::info!("KeyPackage cleanup task started");
+    } else {
+        log::debug!("KeyPackage cleanup task disabled");
+    }
+}
+```
+
+**Modify: `server/src/main.rs`**
+
+Update main() to start the cleanup task:
+
+```rust
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    env_logger::Builder::from_default_env()
+        .format_timestamp_millis()
+        .init();
+
+    let config = Config::from_args();
+
+    log::info!("Starting MLS Chat Server");
+    log::info!("Database: {:?}", config.database);
+    log::info!("Port: {}", config.port);
+
+    // Write PID file if specified
+    if let Some(pidfile) = &config.pidfile {
+        let pid = process::id().to_string();
+        fs::write(pidfile, pid).expect("Failed to write PID file");
+        log::info!("PID file written to: {:?}", pidfile);
+    }
+
+    // Initialize database
+    let pool =
+        db::create_pool(config.database.to_str().unwrap()).expect("Failed to create database pool");
+
+    log::info!("Database initialized");
+
+    let pool_data = web::Data::new(pool.clone());
+    let ws_server = web::Data::new(WsServer::new(Arc::new(pool_data.clone())));
+
+    // Start cleanup task (only in production, not in tests)
+    server::start_cleanup_task_if_enabled(pool_data.clone(), true);
+
+    // Start HTTP server
+    let bind_addr = format!("127.0.0.1:{}", config.port);
+    log::info!("Starting HTTP server on {}", bind_addr);
+
+    let http_server = server::create_http_server(pool_data, ws_server, &bind_addr)?;
+    http_server.await
+}
+```
+
+**Modify: `server/src/lib.rs`**
+
+Export the function for potential use in integration tests:
+
+```rust
+pub use server::start_cleanup_task_if_enabled;
+```
+
+---
+
+### Success Criteria
+
+**Functional Requirements:**
+- [ ] Cleanup task starts automatically when server runs from `main()`
+- [ ] Cleanup task does NOT start in unit tests (no background task in test mode)
+- [ ] Cleanup runs every 60 minutes (default interval)
+- [ ] Each cleanup run deletes all KeyPackages where `not_after <= now`
+- [ ] Cleanup logs count of deleted keys (when count > 0)
+- [ ] Cleanup failures are logged but don't crash the server
+- [ ] Cleanup can be disabled via configuration (for testing)
+- [ ] Multiple cleanup runs don't cause race conditions (lock-based access)
+
+**Code Quality:**
+- [ ] All new code passes clippy linting
+- [ ] All unit tests in cleanup_task.rs pass
+- [ ] All existing server tests still pass (no regression)
+- [ ] cleanup_task.rs module is well-documented (docstrings)
+- [ ] Error handling is consistent with server logging patterns
+
+**Integration:**
+- [ ] Cleanup task compiles with rest of codebase
+- [ ] Task persists for entire server lifetime (not dropped prematurely)
+- [ ] Task gracefully stops when server shuts down
+- [ ] Task doesn't interfere with active reserve/spend operations
+- [ ] Concurrent keypackage operations and cleanup are safe
+
+**Logging & Observability:**
+- [ ] Startup log: "KeyPackage cleanup task started (interval: X seconds)"
+- [ ] Success log: "KeyPackage cleanup completed: N expired keys removed"
+- [ ] Debug log: "KeyPackage cleanup completed: no expired keys found" (when count = 0)
+- [ ] Error log: "KeyPackage cleanup failed: [error message]"
+- [ ] Disabled log: "KeyPackage cleanup task disabled"
+
+**Test Isolation:**
+- [ ] Unit tests do NOT spawn background cleanup tasks
+- [ ] Integration tests CAN optionally call cleanup manually if needed
+- [ ] Test code is not affected by main()'s cleanup task startup
+- [ ] Configuration allows easy opt-out for test scenarios
+
+---
+
+### Implementation Roadmap
+
+**Step 1: Create cleanup_task.rs module**
+- Implement `CleanupTaskConfig` struct
+- Implement `start_cleanup_task()` function
+- Add comprehensive docstrings
+- Add unit tests
+
+**Step 2: Integrate with server initialization**
+- Modify `server.rs` to add `start_cleanup_task_if_enabled()`
+- Modify `main.rs` to call the function
+- Modify `lib.rs` to export for test use
+
+**Step 3: Testing**
+- Run unit tests in cleanup_task.rs
+- Verify no existing tests break
+- Manual verification: Start server, check logs, verify cleanup runs
+
+**Step 4: Documentation**
+- Add comment to `main.rs` explaining cleanup task startup
+- Update README if it mentions server features
+- Add note to `docs/keypackage-pool-implementation.md`
+
+---
+
+### Estimated Time: 1-2 days
+
+---
+
+### Dependencies & Risks
+
+**Dependencies:**
+- `tokio` (already available)
+- `tokio::time::sleep` and task spawning (stable)
+- Existing `KeyPackageStore::cleanup_expired()` method
+
+**Risks:**
+
+1. **Task resource leaks**
+   - *Mitigation:* Use Tokio's built-in task management; task is owned by runtime and cleaned up on shutdown
+   - *Alternative:* Add explicit task cancellation token if server supports graceful shutdown
+
+2. **Lock contention with active requests**
+   - *Mitigation:* Cleanup uses same lock as other keypackage operations; SQLite serializes naturally
+   - *Alternative:* Schedule cleanup during predictable low-traffic windows (future enhancement)
+
+3. **Cleanup never runs in test mode**
+   - *Mitigation:* This is intentional; tests call `cleanup_expired()` directly if needed
+   - *Alternative:* Provide a test utility function to manually trigger cleanup
+
+4. **Log spam if cleanup fails repeatedly**
+   - *Mitigation:* Log at ERROR level; operators will notice and investigate
+   - *Alternative:* Add exponential backoff for error logging (future enhancement)
+
+---
+
+### Future Enhancements (Not Phase 2.7)
+
+- Phase 2.8: Add admin endpoint `POST /admin/cleanup` to manually trigger cleanup
+- Phase 2.9: Make cleanup interval configurable via CLI args or config file
+- Phase 3.0: Add metrics (e.g., Prometheus) to track cleanup latency and count
+- Phase 3.1: Implement graceful shutdown that cancels cleanup task properly
+
+---
+
 ## References
 
 - `docs/keypackage-pool-strategy.md` - Strategy document
 - `changelog/20251105-storageprovider-analysis.md` - OpenMLS StorageProvider analysis
-- `changelog/20251105-plan-openmls-redundancy-analysis.md` - Redundancy analysis
-- `changelog/20251105-phase2.2-keypackage-pool-core.md` - Previous Phase 2.2 (for reference only)
-- `openmls/openmls/src/key_packages/mod.rs:517-587` - KeyPackage generation flow
-- `openmls/sqlite_storage/src/key_packages.rs` - OpenMLS storage implementation
-
----
-
-**Created:** 2025-11-05
-**Status:** Ready for implementation
-**Estimated Total Time:** 10-14 days (Phases 2.1-2.6)
