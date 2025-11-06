@@ -11,6 +11,7 @@ use crate::models::Identity;
 use crate::provider::MlsProvider;
 use crate::storage::LocalStore;
 use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 /// Main MLS client
 ///
@@ -39,6 +40,12 @@ pub struct MlsClient {
 
     /// Initial group name (from CLI argument, used for first connection)
     initial_group_name: String,
+
+    /// Time of last KeyPackage pool refresh (for periodic refresh)
+    last_refresh_time: Option<SystemTime>,
+
+    /// Period between KeyPackage pool refreshes (default: 1 hour)
+    refresh_period: Duration,
 }
 
 impl MlsClient {
@@ -72,6 +79,8 @@ impl MlsClient {
             connection,
             selected_group_id: None,
             initial_group_name: group_name.to_string(),
+            last_refresh_time: None,
+            refresh_period: Duration::from_secs(3600), // Default: 1 hour
         })
     }
 
@@ -92,6 +101,52 @@ impl MlsClient {
     /// Refresh the KeyPackage pool for this client
     pub async fn refresh_key_packages(&mut self) -> Result<()> {
         self.connection.refresh_key_packages().await
+    }
+
+    /// Check if the refresh period has elapsed since the last refresh
+    ///
+    /// Returns true if:
+    /// - No refresh has occurred yet (last_refresh_time is None), OR
+    /// - The elapsed time since last refresh >= refresh_period
+    pub fn should_refresh(&self) -> bool {
+        match self.last_refresh_time {
+            None => true, // First refresh should happen immediately
+            Some(last_time) => {
+                match SystemTime::now().duration_since(last_time) {
+                    Ok(elapsed) => elapsed >= self.refresh_period,
+                    Err(_) => {
+                        // Clock went backwards, trigger refresh to be safe
+                        log::warn!("System clock went backwards, triggering refresh");
+                        true
+                    }
+                }
+            }
+        }
+    }
+
+    /// Update the last refresh time to now
+    ///
+    /// Should be called after successfully calling refresh_key_packages()
+    pub fn update_refresh_time(&mut self) {
+        self.last_refresh_time = Some(SystemTime::now());
+    }
+
+    /// Set the refresh period (primarily for testing)
+    ///
+    /// # Arguments
+    /// * `period` - Duration between refreshes (e.g., Duration::from_secs(10) for testing)
+    pub fn set_refresh_period(&mut self, period: Duration) {
+        self.refresh_period = period;
+    }
+
+    /// Get the current refresh period (for testing/debugging)
+    pub fn get_refresh_period(&self) -> Duration {
+        self.refresh_period
+    }
+
+    /// Get the time of the last refresh (for testing/debugging)
+    pub fn get_last_refresh_time(&self) -> Option<SystemTime> {
+        self.last_refresh_time
     }
 
     /// Override the KeyPackage pool configuration (primarily for tests)

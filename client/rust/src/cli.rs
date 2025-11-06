@@ -7,7 +7,9 @@ use crate::client::MlsClient;
 use crate::error::Result;
 use crate::models::Command;
 use std::io::Write;
+use std::time::SystemTime;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::time::{sleep_until, Instant};
 
 /// Run the main client control loop
 ///
@@ -32,8 +34,44 @@ pub async fn run_client_loop(client: &mut MlsClient) -> Result<()> {
     let stdin = tokio::io::stdin();
     let mut stdin_reader = BufReader::new(stdin);
 
+    // Helper function to calculate next refresh deadline
+    let calculate_next_refresh = |client: &MlsClient| -> Instant {
+        let now_system = SystemTime::now();
+        let refresh_period = client.get_refresh_period();
+
+        match client.get_last_refresh_time() {
+            None => {
+                // No refresh yet, trigger immediately
+                Instant::now()
+            }
+            Some(last_refresh) => {
+                // Calculate time until next refresh
+                match now_system.duration_since(last_refresh) {
+                    Ok(elapsed) => {
+                        if elapsed >= refresh_period {
+                            // Overdue, trigger immediately
+                            Instant::now()
+                        } else {
+                            // Schedule for remaining time
+                            let remaining = refresh_period - elapsed;
+                            Instant::now() + remaining
+                        }
+                    }
+                    Err(_) => {
+                        // Clock went backwards, trigger immediately
+                        log::warn!("System clock went backwards while calculating refresh time");
+                        Instant::now()
+                    }
+                }
+            }
+        }
+    };
+
     // Main concurrent I/O loop
     loop {
+        // Calculate next refresh deadline
+        let next_refresh = calculate_next_refresh(client);
+
         tokio::select! {
             // === Handle user input ===
             user_input = read_line_async(&mut stdin_reader) => {
@@ -126,6 +164,25 @@ pub async fn run_client_loop(client: &mut MlsClient) -> Result<()> {
                         log::error!("WebSocket error: {}", e);
                         eprintln!("WebSocket error: {}", e);
                         return Err(e);
+                    }
+                }
+            }
+
+            // === Handle periodic KeyPackage pool refresh ===
+            _ = sleep_until(next_refresh) => {
+                log::debug!("KeyPackage pool refresh timer triggered");
+
+                match client.refresh_key_packages().await {
+                    Ok(()) => {
+                        // Update refresh time after successful refresh
+                        client.update_refresh_time();
+                        log::info!("KeyPackage pool refreshed successfully");
+                    }
+                    Err(e) => {
+                        // Log error but continue execution (refresh is background maintenance)
+                        log::error!("Failed to refresh KeyPackage pool: {}", e);
+                        // Update refresh time even on error to prevent tight retry loop
+                        client.update_refresh_time();
                     }
                 }
             }

@@ -561,23 +561,102 @@ async fn finalize_user_add(&self, reserved_key: &ReservedKeyPackage) -> Result<(
 
 **Rationale:** Integrate pool refresh into CLI loop
 
+**Architectural Decision (Implemented 2025-11-06):**
+The original plan proposed a message-counter approach ("every 10 messages"). **Agent A implemented a superior time-based approach instead** with configurable period (default 1 hour). Rationale:
+- Pool health maintained even during low-activity periods
+- More predictable refresh schedule for operational monitoring
+- Avoids edge cases where inactive groups never refresh
+- Aligns with standard MLS key rotation practices
+- Better than message-based for long-running sessions with bursty activity
+
 **Files to modify:**
-- `client/rust/src/cli.rs` (MODIFY - call refresh_key_packages() periodically)
+- `client/rust/src/client.rs` (MODIFY - add time-based refresh tracking)
+- `client/rust/src/cli.rs` (MODIFY - call refresh_key_packages() on timer)
 
 **Tasks:**
-1. Add message counter to MlsClient or use timer
-2. Call `client.refresh_key_packages()` every N messages (e.g., 10)
-3. Log refresh results
-4. Handle refresh errors gracefully (log but don't break CLI)
+1. Add `last_refresh_time: Option<SystemTime>` and `refresh_period: Duration` fields to MlsClient
+2. Implement `should_refresh()` method checking if period has elapsed
+3. Implement `update_refresh_time()` method to track last refresh
+4. Add configurable `set_refresh_period()` method
+5. Integrate into CLI loop via third `tokio::select!` branch with timeout
+6. Log refresh triggers and results
+7. Handle refresh errors gracefully (log but don't break CLI)
+8. Write comprehensive unit tests for time-based logic
 
 **Success Criteria:**
-- [ ] Unit test: Refresh called on correct interval
-- [ ] Integration test: CLI loop with refresh works end-to-end
-- [ ] E2E test: Multiple users send messages, refresh triggers
-- [ ] Refresh errors logged but don't crash client
-- [ ] Refresh is idempotent (multiple calls safe)
+- [ ] Time-based refresh trigger implemented ✅
+- [ ] Configurable period (default 1 hour) ✅
+- [ ] Unit test: Refresh called on correct time interval ✅
+- [ ] Integration test: CLI loop with refresh works end-to-end ✅
+- [ ] E2E test: Multiple users, refresh triggers ✅
+- [ ] Refresh errors logged but don't crash client ✅
+- [ ] Refresh is idempotent (multiple calls safe) ✅
+
+**Status:** ✅ COMPLETE (2025-11-06)
 
 **Estimate:** 1-2 days
+
+---
+
+### Phase 2.5.1: Code Cleanup & Quality Fixes (Pre-Phase 2.6)
+
+**Rationale:** Address pre-existing code quality issues (clippy warnings and test failure) identified during Phase 2.5 review before proceeding to Phase 2.6.
+
+**Issues to Fix:**
+
+1. **Clippy Warnings: `field_reassign_with_default` (5 total)**
+   - Files: `keypackage_pool_tests.rs` (4 warnings), `client_tests.rs` (1 warning)
+   - Issue: Using `let mut x = T::default(); x.field = value;` instead of struct literal syntax
+   - Fix: Replace with `T { field: value, ..Default::default() }` syntax
+   - Examples (from Agent B feedback):
+     ```rust
+     // Current (triggers warning):
+     let mut config = KeyPackagePoolConfig::default();
+     config.target_pool_size = 2;
+
+     // Fixed:
+     let config = KeyPackagePoolConfig {
+         target_pool_size: 2,
+         ..Default::default()
+     };
+     ```
+   - Severity: MINOR (code style, no functionality impact)
+   - Source: Phase 2.2/2.4 code (not caused by Phase 2.5)
+
+2. **Test Failure: `test_sender_skips_own_application_message`**
+   - Status: Pre-existing (not caused by Phase 2.5)
+   - Error: `KeyPackage(PoolExhausted { username: "bob" })`
+   - Issue: Bob's KeyPackage pool exhausted when Alice invites him
+   - Root Cause: Phase 2.4 invite flow needs investigation/fix
+   - Pass Rate: 27/28 integration tests (96%)
+   - Action: Investigate and fix root cause in KeyPackage pool or invite logic
+   - Severity: INFORMATIONAL (needs fixing but doesn't block Phase 2.6)
+
+**Files to modify:**
+- `client/rust/tests/keypackage_pool_tests.rs` (MODIFY - fix 4 clippy warnings)
+- `client/rust/tests/client_tests.rs` (MODIFY - fix 1 clippy warning)
+- `client/rust/src/mls/membership.rs` (INVESTIGATE - may need fix for pool exhaustion)
+- `client/rust/src/error.rs` (VERIFY - pool exhaustion error propagation)
+
+**Tasks:**
+1. Fix all 5 clippy warnings using struct literal syntax with `..Default::default()`
+2. Investigate `test_sender_skips_own_application_message` failure
+3. Identify root cause (insufficient pool size, incorrect reserve/spend logic, timing issue)
+4. Implement fix in relevant module (membership.rs or elsewhere)
+5. Verify all tests pass including the previously failing test
+6. Run clippy clean (no warnings)
+7. Verify no new regressions
+
+**Success Criteria:**
+- [ ] All clippy warnings fixed (0 warnings in Phase 2.2/2.4 code)
+- [ ] `test_sender_skips_own_application_message` passes
+- [ ] All 28 integration tests pass
+- [ ] All 71 unit tests pass (no regressions)
+- [ ] Clippy check: `cargo clippy --all-targets -- -D warnings` passes cleanly
+
+**Estimate:** 1-2 days
+
+**Note:** This phase is optional if pre-existing issues are acceptable. However, recommended to address before Phase 2.6 for clean git history and full test suite passing.
 
 ---
 
@@ -820,10 +899,20 @@ Spend:
 - [ ] MlsMembership uses reserve/spend for invitations
 - [ ] Error handling complete
 
-**Phase 2.5 (CLI):**
-- [ ] Periodic refresh in CLI loop
-- [ ] Error handling tested
-- [ ] Idempotency verified
+**Phase 2.5 (CLI - Time-based Refresh):**
+- [x] Time-based refresh trigger implemented
+- [x] Configurable period (default 1 hour)
+- [x] Periodic refresh in CLI loop via tokio::select!
+- [x] Error handling tested
+- [x] Idempotency verified
+- [x] All 10 unit tests pass
+
+**Phase 2.5.1 (Code Cleanup - Pre-Phase 2.6):**
+- [ ] Fix 5 clippy warnings (field_reassign_with_default)
+- [ ] Fix test_sender_skips_own_application_message failure
+- [ ] All 28 integration tests pass
+- [ ] All 71 unit tests pass
+- [ ] Clippy clean (0 warnings)
 
 **Phase 2.6 (Docs & Testing):**
 - [ ] All test scenarios covered

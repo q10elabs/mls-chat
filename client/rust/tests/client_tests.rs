@@ -658,3 +658,246 @@ async fn test_sender_skips_own_application_message() {
     // Cleanup
     server_handle.abort();
 }
+
+// ==================== Phase 2.5: Periodic Refresh Tests ====================
+
+/// Test: should_refresh() returns true when no refresh has occurred yet
+#[tokio::test]
+async fn test_should_refresh_returns_true_on_first_call() {
+    let (client, _temp_dir) = create_test_client_no_init("http://localhost:4000", "alice", "group");
+
+    // Before any refresh, should_refresh() should return true
+    assert!(
+        client.should_refresh(),
+        "should_refresh() should return true before first refresh"
+    );
+}
+
+/// Test: should_refresh() returns false immediately after update_refresh_time()
+#[tokio::test]
+async fn test_should_refresh_returns_false_after_update() {
+    let (mut client, _temp_dir) =
+        create_test_client_no_init("http://localhost:4000", "alice", "group");
+
+    // Update refresh time to now
+    client.update_refresh_time();
+
+    // Should not need refresh immediately after update
+    assert!(
+        !client.should_refresh(),
+        "should_refresh() should return false immediately after update"
+    );
+}
+
+/// Test: should_refresh() returns true after refresh period has elapsed
+#[tokio::test]
+async fn test_should_refresh_returns_true_after_period_elapsed() {
+    let (mut client, _temp_dir) =
+        create_test_client_no_init("http://localhost:4000", "alice", "group");
+
+    // Set a very short refresh period for testing (1 second)
+    client.set_refresh_period(Duration::from_secs(1));
+
+    // Update refresh time to now
+    client.update_refresh_time();
+
+    // Should not need refresh immediately
+    assert!(
+        !client.should_refresh(),
+        "should_refresh() should return false immediately after update"
+    );
+
+    // Wait for refresh period to elapse
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Should need refresh now
+    assert!(
+        client.should_refresh(),
+        "should_refresh() should return true after period elapsed"
+    );
+}
+
+/// Test: refresh_period is configurable
+#[tokio::test]
+async fn test_refresh_period_is_configurable() {
+    let (mut client, _temp_dir) =
+        create_test_client_no_init("http://localhost:4000", "alice", "group");
+
+    // Default should be 1 hour (3600 seconds)
+    assert_eq!(
+        client.get_refresh_period(),
+        Duration::from_secs(3600),
+        "Default refresh period should be 1 hour"
+    );
+
+    // Set custom period
+    let custom_period = Duration::from_secs(300); // 5 minutes
+    client.set_refresh_period(custom_period);
+
+    // Verify it was set
+    assert_eq!(
+        client.get_refresh_period(),
+        custom_period,
+        "Custom refresh period should be set"
+    );
+}
+
+/// Test: update_refresh_time() sets the current time
+#[tokio::test]
+async fn test_update_refresh_time_sets_current_time() {
+    let (mut client, _temp_dir) =
+        create_test_client_no_init("http://localhost:4000", "alice", "group");
+
+    // Initially should be None
+    assert!(
+        client.get_last_refresh_time().is_none(),
+        "Last refresh time should be None initially"
+    );
+
+    // Record time before update
+    let before = std::time::SystemTime::now();
+
+    // Update refresh time
+    client.update_refresh_time();
+
+    // Get the updated time
+    let last_refresh = client
+        .get_last_refresh_time()
+        .expect("Last refresh time should be set");
+
+    // Record time after update
+    let after = std::time::SystemTime::now();
+
+    // Verify last_refresh is between before and after
+    assert!(
+        last_refresh >= before && last_refresh <= after,
+        "Last refresh time should be set to current time"
+    );
+}
+
+/// Test: should_refresh() with multiple refresh cycles
+#[tokio::test]
+async fn test_should_refresh_multiple_cycles() {
+    let (mut client, _temp_dir) =
+        create_test_client_no_init("http://localhost:4000", "alice", "group");
+
+    // Set a short refresh period for testing (500ms)
+    client.set_refresh_period(Duration::from_millis(500));
+
+    // First cycle: should refresh immediately
+    assert!(
+        client.should_refresh(),
+        "First call should return true"
+    );
+    client.update_refresh_time();
+
+    // Should not refresh immediately after update
+    assert!(
+        !client.should_refresh(),
+        "Should not refresh immediately after update"
+    );
+
+    // Wait for period to elapse
+    tokio::time::sleep(Duration::from_millis(600)).await;
+
+    // Second cycle: should refresh again
+    assert!(
+        client.should_refresh(),
+        "Should refresh after period elapsed"
+    );
+    client.update_refresh_time();
+
+    // Should not refresh immediately again
+    assert!(
+        !client.should_refresh(),
+        "Should not refresh immediately after second update"
+    );
+}
+
+/// Test: Refresh period can be set to very short intervals (for testing)
+#[tokio::test]
+async fn test_refresh_period_short_interval() {
+    let (mut client, _temp_dir) =
+        create_test_client_no_init("http://localhost:4000", "alice", "group");
+
+    // Set very short period (100ms) for testing
+    client.set_refresh_period(Duration::from_millis(100));
+    client.update_refresh_time();
+
+    // Should not refresh immediately
+    assert!(!client.should_refresh());
+
+    // Wait for period
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Should refresh now
+    assert!(client.should_refresh());
+}
+
+/// Test: Refresh period can be set to long intervals
+#[tokio::test]
+async fn test_refresh_period_long_interval() {
+    let (mut client, _temp_dir) =
+        create_test_client_no_init("http://localhost:4000", "alice", "group");
+
+    // Set long period (1 hour)
+    let one_hour = Duration::from_secs(3600);
+    client.set_refresh_period(one_hour);
+    client.update_refresh_time();
+
+    // Should not refresh immediately
+    assert!(!client.should_refresh());
+
+    // Even after a few seconds, should still not refresh
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(!client.should_refresh());
+}
+
+/// Test: update_refresh_time is idempotent
+#[tokio::test]
+async fn test_update_refresh_time_is_idempotent() {
+    let (mut client, _temp_dir) =
+        create_test_client_no_init("http://localhost:4000", "alice", "group");
+
+    // Call multiple times in quick succession
+    client.update_refresh_time();
+    let time1 = client.get_last_refresh_time().unwrap();
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    client.update_refresh_time();
+    let time2 = client.get_last_refresh_time().unwrap();
+
+    // Both times should be set (not None)
+    // time2 should be slightly after time1
+    assert!(
+        time2 >= time1,
+        "Second update should set time >= first update"
+    );
+}
+
+/// Test: Refresh time tracking survives multiple updates
+#[tokio::test]
+async fn test_refresh_time_tracking_survives_updates() {
+    let (mut client, _temp_dir) =
+        create_test_client_no_init("http://localhost:4000", "alice", "group");
+
+    client.set_refresh_period(Duration::from_millis(200));
+
+    // First refresh
+    assert!(client.should_refresh());
+    client.update_refresh_time();
+    assert!(!client.should_refresh());
+
+    // Wait and refresh again
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(client.should_refresh());
+    client.update_refresh_time();
+    assert!(!client.should_refresh());
+
+    // Wait and refresh a third time
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(client.should_refresh());
+    client.update_refresh_time();
+    assert!(!client.should_refresh());
+}
