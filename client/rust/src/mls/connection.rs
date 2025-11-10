@@ -601,6 +601,23 @@ impl MlsConnection {
         self.memberships.get_mut(group_id)
     }
 
+    /// Get membership by group name
+    ///
+    /// Searches through all memberships to find one matching the group name.
+    ///
+    /// # Arguments
+    /// * `group_name` - The human-readable group name to search for
+    ///
+    /// # Returns
+    /// * `Some((group_id, &MlsMembership))` if membership exists
+    /// * `None` if no membership for this group name
+    pub fn get_membership_by_name(&self, group_name: &str) -> Option<(Vec<u8>, &MlsMembership<'static>)> {
+        self.memberships
+            .iter()
+            .find(|(_, membership)| membership.get_group_name() == group_name)
+            .map(|(group_id, membership)| (group_id.clone(), membership))
+    }
+
     /// Check if WebSocket is connected
     pub fn is_websocket_connected(&self) -> bool {
         self.websocket.is_some()

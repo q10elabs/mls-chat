@@ -216,6 +216,12 @@ impl<'a> MlsMembership<'a> {
                 e
             })?;
 
+        let initial_members = joined_group.members().count();
+        log::debug!(
+            "Welcome message has {} initial members in GroupInfo",
+            initial_members
+        );
+
         log::info!(
             "Successfully joined group '{}' via Welcome message from {}",
             group_name,

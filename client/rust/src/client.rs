@@ -241,6 +241,39 @@ impl MlsClient {
             .await
     }
 
+    /// Sync the selected group ID to match the actual group
+    ///
+    /// When a Welcome message arrives for the group being connected to,
+    /// it may create a new membership with a different group_id than the
+    /// initially created empty group. This method updates selected_group_id
+    /// to point to the correct membership.
+    ///
+    /// This should be called after processing incoming envelopes to ensure
+    /// the selected group ID stays in sync with actual memberships.
+    pub fn sync_selected_group_after_welcome(&mut self) {
+        log::debug!("Checking if group selection needs sync for '{}'", self.initial_group_name);
+
+        // Check if there's a membership for the group we're trying to connect to
+        if let Some((new_group_id, membership)) = self.connection.get_membership_by_name(&self.initial_group_name) {
+            let members = membership.list_members();
+            log::debug!(
+                "Found membership for '{}' with {} members: {:?}",
+                self.initial_group_name,
+                members.len(),
+                members
+            );
+
+            // Check if selected_group_id is different from the actual group
+            if self.selected_group_id.as_ref() != Some(&new_group_id) {
+                log::info!(
+                    "Updated selected group ID for '{}' after Welcome message",
+                    self.initial_group_name
+                );
+                self.selected_group_id = Some(new_group_id);
+            }
+        }
+    }
+
     /// List group members
     ///
     /// Returns the members from the currently selected group.

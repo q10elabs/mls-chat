@@ -149,6 +149,9 @@ pub async fn run_client_loop(client: &mut MlsClient) -> Result<()> {
                         match client.get_connection_mut().process_incoming_envelope(envelope).await {
                             Ok(()) => {
                                 // Message processed successfully (display handled by membership)
+                                // After processing, sync the selected group in case a Welcome message
+                                // created a new membership that should be selected
+                                client.sync_selected_group_after_welcome();
                             }
                             Err(e) => {
                                 log::error!("Failed to process incoming message: {}", e);
