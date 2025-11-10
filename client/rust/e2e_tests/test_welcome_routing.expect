@@ -67,7 +67,7 @@ proc eexpect {text} {
 
 # Step 1: Start server with isolated database
 puts "\n=== Step 1: Starting server with isolated database ==="
-spawn bash -c "cd ../../../server && RUST_LOG=debug cargo run --quiet -- --port $server_port --database $server_db --pidfile $server_pidfile"
+spawn bash -c "cd ../../../server && RUST_LOG=info cargo run --quiet -- --port $server_port --database $server_db --pidfile $server_pidfile"
 set server_spawn_id $spawn_id
 
 # Wait for server to be ready
@@ -77,7 +77,7 @@ puts "Server started on port $server_port"
 
 # Step 2: Start Bob first to register his key package
 puts "\n=== Step 2: Starting Bob with isolated config ==="
-spawn bash -c "cd .. && RUST_LOG=debug cargo run --quiet -- --server http://localhost:$server_port --config $bob_config_dir unusedgroup bob"
+spawn bash -c "cd .. && RUST_LOG=info cargo run --quiet -- --server http://localhost:$server_port --config $bob_config_dir unusedgroup bob"
 set bob_spawn_id $spawn_id
 
 expect {
@@ -93,7 +93,7 @@ expect {
 
 # Step 3: Start Alice with isolated config
 puts "\n=== Step 3: Starting Alice with isolated config ==="
-spawn bash -c "cd .. && RUST_LOG=debug cargo run --quiet -- --server http://localhost:$server_port --config $alice_config_dir mygroup alice"
+spawn bash -c "cd .. && RUST_LOG=info cargo run --quiet -- --server http://localhost:$server_port --config $alice_config_dir mygroup alice"
 set alice_spawn_id $spawn_id
 
 expect {
