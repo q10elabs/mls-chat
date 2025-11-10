@@ -322,6 +322,29 @@ impl MlsConnection {
         }
     }
 
+    /// Subscribe to a group via WebSocket
+    ///
+    /// Sends a subscription message to the server to receive messages from the group.
+    /// The group_id is base64-encoded for transmission.
+    ///
+    /// # Arguments
+    /// * `group_id` - The raw group ID bytes to subscribe to
+    ///
+    /// # Errors
+    /// * WebSocket not connected
+    /// * WebSocket send errors
+    pub async fn subscribe_to_group(&mut self, group_id: &[u8]) -> Result<()> {
+        let group_id_b64 = general_purpose::STANDARD.encode(group_id);
+        log::debug!("Subscribing to group: {}", group_id_b64);
+
+        if let Some(websocket) = &self.websocket {
+            websocket.subscribe_to_group(&group_id_b64).await?;
+            Ok(())
+        } else {
+            Err(ClientError::Config("WebSocket not connected".to_string()))
+        }
+    }
+
     /// Process an incoming message envelope
     ///
     /// Routes the message to the appropriate handler based on envelope type:
@@ -387,13 +410,8 @@ impl MlsConnection {
                 )?;
 
                 // Subscribe to group for receiving messages
-                // Clone group_id before moving membership into HashMap
                 let group_id = membership.get_group_id().to_vec();
-                let group_id_b64 = general_purpose::STANDARD.encode(&group_id);
-
-                if let Some(websocket) = &self.websocket {
-                    websocket.subscribe_to_group(&group_id_b64).await?;
-                }
+                self.subscribe_to_group(&group_id).await?;
 
                 log::info!(
                     "Created membership for group '{}' from Welcome message",

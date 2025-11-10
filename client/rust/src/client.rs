@@ -192,6 +192,9 @@ impl MlsClient {
         // Add membership to connection's HashMap
         self.connection.add_membership(membership);
 
+        // Subscribe to the group to receive messages
+        self.connection.subscribe_to_group(&group_id).await?;
+
         log::info!(
             "Connected to group '{}' successfully",
             group_name
