@@ -86,7 +86,7 @@ expect {
     }
     timeout {
         puts "✗ TIMEOUT: Bob failed to start"
-        cleanup_server $server_pidfile
+        cleanup_server
         exit 1
     }
 }
@@ -102,7 +102,7 @@ expect {
     }
     timeout {
         puts "✗ TIMEOUT: Alice failed to start"
-        cleanup_server $server_pidfile
+        cleanup_server
         exit 1
     }
 }
@@ -111,28 +111,29 @@ expect {
 puts "\n=== Step 4: Alice invites Bob ==="
 send "/invite bob\r"
 
-eexpect "invited bob"
+eexpect "Invited bob"
 
 # Step 5: Wait for Welcome message to be delivered and processed
 puts "\n=== Step 5: Waiting for Bob to receive Welcome ==="
 set spawn_id $bob_spawn_id
-eexpect "Successfully processed Welcome message from alice"
+eexpect "Successfully joined group"
 
 # Step 6: Bob lists members to verify Welcome was processed
 puts "\n=== Step 6: Bob lists members (verify Welcome was processed) ==="
+eexpect "> "
 send "/list\r"
-
 eexpect "alice"
 
 # Step 7: Verify Alice also sees Bob after invite
 puts "\n=== Step 7: Alice lists members (should see bob) ==="
 set spawn_id $alice_spawn_id
+eexpect "> "
 send "/list\r"
-
 eexpect "bob"
 
 # Step 8: Test messaging between Alice and Bob
 puts "\n=== Step 8: Testing message exchange ==="
+eexpect "> "
 send  "Hello from Alice\r"
 puts "Alice sent: Hello from Alice"
 
@@ -140,9 +141,10 @@ puts "Alice sent: Hello from Alice"
 set spawn_id $bob_spawn_id
 eexpect "Hello from Alice"
 puts "Bob received: Hello from Alice"
-
+eexpect "> "
 send "Hello from Bob\r"
 puts "Bob sent: Hello from Bob"
+
 set spawn_id $alice_spawn_id
 eexpect "Hello from Bob"
 puts "Alice received: Hello from Bob"
@@ -151,9 +153,11 @@ puts "Alice received: Hello from Bob"
 # Step 9: Cleanup
 puts "\n=== Step 9: Cleanup ==="
 set spawn_id $bob_spawn_id
+eexpect "> "
 send "/quit\r"
 eexpect eeof
 set spawn_id $alice_spawn_id
+eexpect "> "
 send "/quit\r"
 eexpect eeof
 
