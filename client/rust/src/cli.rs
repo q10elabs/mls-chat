@@ -6,6 +6,7 @@
 use crate::client::MlsClient;
 use crate::error::Result;
 use crate::models::Command;
+use base64::{engine::general_purpose, Engine as _};
 use std::io::Write;
 use std::time::SystemTime;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -147,11 +148,20 @@ pub async fn run_client_loop(client: &mut MlsClient) -> Result<()> {
                         // Process the incoming envelope via connection's routing hub
                         // (membership will handle display internally for now)
                         match client.get_connection_mut().process_incoming_envelope(envelope).await {
-                            Ok(()) => {
-                                // Message processed successfully (display handled by membership)
-                                // After processing, sync the selected group in case a Welcome message
-                                // created a new membership that should be selected
-                                client.sync_selected_group_after_welcome();
+                            Ok(welcome_group_id) => {
+                                // Message processed successfully
+                                // If a Welcome message created a new membership, update selected group
+                                if let Some(new_group_id) = welcome_group_id {
+                                    log::info!(
+                                        "Welcome message processed: switching to new group {}",
+                                        general_purpose::STANDARD.encode(&new_group_id)
+                                    );
+                                    client.set_selected_group_id(new_group_id.clone());
+                                    // Update the displayed group name for the next loop iteration
+                                    if let Ok(new_group_name) = client.get_current_group_name() {
+                                        println!("Switched to group: {}", new_group_name);
+                                    }
+                                }
                             }
                             Err(e) => {
                                 log::error!("Failed to process incoming message: {}", e);

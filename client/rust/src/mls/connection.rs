@@ -325,22 +325,29 @@ impl MlsConnection {
     /// Process an incoming message envelope
     ///
     /// Routes the message to the appropriate handler based on envelope type:
-    /// - WelcomeMessage → Create new MlsMembership from Welcome
-    /// - ApplicationMessage → Find membership by group_id, call process_incoming_message()
-    /// - CommitMessage → Find membership by group_id, call process_incoming_message()
+    /// - WelcomeMessage → Create new MlsMembership from Welcome, return the group_id
+    /// - ApplicationMessage → Find membership by group_id, call process_incoming_message(), return None
+    /// - CommitMessage → Find membership by group_id, call process_incoming_message(), return None
     ///
     /// ## Message Routing Logic
     ///
     /// ### WelcomeMessage
     /// When a user is invited to a group, they receive a Welcome message.
     /// This creates a new MlsMembership and adds it to the memberships HashMap.
+    /// Returns `Some(group_id)` so the caller can update selected group if needed.
     ///
     /// ### ApplicationMessage / CommitMessage
     /// These messages are group-specific and must be routed to the correct membership
     /// by looking up the group_id in the memberships HashMap.
+    /// Returns `None` since these don't change group selection.
     ///
     /// # Arguments
     /// * `envelope` - Message envelope from WebSocket
+    ///
+    /// # Returns
+    /// * `Ok(Some(group_id))` - Welcome message created new membership with this group_id
+    /// * `Ok(None)` - Other message types processed (don't affect group selection)
+    /// * `Err(_)` - Message processing errors
     ///
     /// # Errors
     /// * Message processing errors
@@ -350,9 +357,11 @@ impl MlsConnection {
     /// # Example
     /// ```rust
     /// let envelope = connection.next_envelope().await?.unwrap();
-    /// connection.process_incoming_envelope(envelope).await?;
+    /// if let Some(group_id) = connection.process_incoming_envelope(envelope).await? {
+    ///     // Welcome message was processed, update selected group
+    /// }
     /// ```
-    pub async fn process_incoming_envelope(&mut self, envelope: MlsMessageEnvelope) -> Result<()> {
+    pub async fn process_incoming_envelope(&mut self, envelope: MlsMessageEnvelope) -> Result<Option<Vec<u8>>> {
         match envelope {
             MlsMessageEnvelope::WelcomeMessage {
                 inviter,
@@ -378,8 +387,9 @@ impl MlsConnection {
                 )?;
 
                 // Subscribe to group for receiving messages
-                let group_id = membership.get_group_id();
-                let group_id_b64 = general_purpose::STANDARD.encode(group_id);
+                // Clone group_id before moving membership into HashMap
+                let group_id = membership.get_group_id().to_vec();
+                let group_id_b64 = general_purpose::STANDARD.encode(&group_id);
 
                 if let Some(websocket) = &self.websocket {
                     websocket.subscribe_to_group(&group_id_b64).await?;
@@ -391,9 +401,10 @@ impl MlsConnection {
                 );
 
                 // Store membership in HashMap
-                self.memberships.insert(group_id.to_vec(), membership);
+                self.memberships.insert(group_id.clone(), membership);
 
-                Ok(())
+                // Return the group_id so caller can update selected group if needed
+                Ok(Some(group_id))
             }
             MlsMessageEnvelope::ApplicationMessage {
                 sender,
@@ -435,7 +446,10 @@ impl MlsConnection {
                 // Delegate to membership
                 membership
                     .process_incoming_message(envelope, user, &self.mls_provider)
-                    .await
+                    .await?;
+
+                // ApplicationMessage doesn't affect group selection
+                Ok(None)
             }
             MlsMessageEnvelope::CommitMessage {
                 group_id,
@@ -477,7 +491,10 @@ impl MlsConnection {
                 // Delegate to membership
                 membership
                     .process_incoming_message(envelope, user, &self.mls_provider)
-                    .await
+                    .await?;
+
+                // CommitMessage doesn't affect group selection
+                Ok(None)
             }
         }
     }
@@ -1009,6 +1026,12 @@ mod tests {
             .await;
         assert!(result.is_ok(), "Welcome processing should succeed");
 
+        // Verify that Welcome returned Some(group_id)
+        assert!(
+            result.as_ref().map(|r| r.is_some()).unwrap_or(false),
+            "Welcome message should return Some(group_id)"
+        );
+
         // === Verify membership was created ===
         let group_id = alice_group.group_id().as_slice();
         let membership = bob_connection.get_membership(group_id);
@@ -1081,10 +1104,15 @@ mod tests {
             welcome_blob: welcome_b64,
             ratchet_tree_blob: ratchet_tree_b64,
         };
-        bob_connection
+        let result = bob_connection
             .process_incoming_envelope(welcome_envelope)
-            .await
-            .unwrap();
+            .await;
+        assert!(result.is_ok(), "Welcome processing should succeed");
+        assert!(
+            result.as_ref().map(|r| r.is_some()).unwrap_or(false),
+            "Welcome message should return Some(group_id)"
+        );
+        result.unwrap();
 
         // === Alice sends a message ===
         // Store group_id before mutable borrow
@@ -1169,15 +1197,20 @@ mod tests {
         let ratchet_tree1_bytes = serde_json::to_vec(&ratchet_tree1).unwrap();
         let ratchet_tree1_b64 = general_purpose::STANDARD.encode(&ratchet_tree1_bytes);
 
-        bob_connection
+        let result = bob_connection
             .process_incoming_envelope(MlsMessageEnvelope::WelcomeMessage {
                 inviter: "alice".to_string(),
                 invitee: "bob".to_string(),
                 welcome_blob: welcome1_b64,
                 ratchet_tree_blob: ratchet_tree1_b64,
             })
-            .await
-            .unwrap();
+            .await;
+        assert!(result.is_ok(), "Welcome processing should succeed");
+        assert!(
+            result.as_ref().map(|r| r.is_some()).unwrap_or(false),
+            "Welcome message should return Some(group_id)"
+        );
+        result.unwrap();
 
         // Verify Bob sees 2 members initially (store group_id before mutable borrows)
         let group_id = alice_group.group_id().as_slice().to_vec();

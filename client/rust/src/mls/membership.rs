@@ -725,9 +725,10 @@ impl<'a> MlsMembership<'a> {
                 commit_blob,
             } => {
                 log::info!(
-                    "Received Commit from {} for group {}",
+                    "Received Commit from {} for group {} ({})",
                     sender,
-                    self.group_name
+                    self.group_name,
+                    _group_id_b64,
                 );
 
                 // Skip processing our own Commit messages

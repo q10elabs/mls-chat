@@ -75,7 +75,9 @@ async fn main() -> Result<()> {
     client.initialize().await?;
 
     // Connect to group (create or load existing)
-    client.connect_to_group().await?;
+    // Note: group_name is used to create the initial group if it doesn't exist
+    // After Welcome messages are processed, the client may switch to a different group
+    client.connect_to_group(&args.group_name).await?;
 
     // Run the client control loop
     cli::run_client_loop(&mut client).await?;

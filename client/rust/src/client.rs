@@ -38,9 +38,6 @@ pub struct MlsClient {
     /// Currently selected group ID (for single-group CLI)
     selected_group_id: Option<Vec<u8>>,
 
-    /// Initial group name (from CLI argument, used for first connection)
-    initial_group_name: String,
-
     /// Time of last KeyPackage pool refresh (for periodic refresh)
     last_refresh_time: Option<SystemTime>,
 
@@ -78,7 +75,6 @@ impl MlsClient {
         Ok(Self {
             connection,
             selected_group_id: None,
-            initial_group_name: group_name.to_string(),
             last_refresh_time: None,
             refresh_period: Duration::from_secs(3600), // Default: 1 hour
         })
@@ -164,11 +160,14 @@ impl MlsClient {
     /// Creates or loads a group membership and connects WebSocket for real-time messaging.
     /// Delegates to MlsConnection and MlsMembership.
     ///
+    /// # Arguments
+    /// * `group_name` - Name of the group to create or load
+    ///
     /// # Errors
     /// * WebSocket connection errors
     /// * MLS errors when creating/loading group
-    pub async fn connect_to_group(&mut self) -> Result<()> {
-        log::info!("Connecting to group: {}", self.initial_group_name);
+    pub async fn connect_to_group(&mut self, group_name: &str) -> Result<()> {
+        log::info!("Connecting to group: {}", group_name);
 
         // Connect WebSocket first
         self.connection.connect_websocket().await?;
@@ -178,10 +177,10 @@ impl MlsClient {
             ClientError::Config("User not initialized - call initialize() first".to_string())
         })?;
 
-        // Try to load or create membership for the initial group
+        // Try to load or create membership for the specified group
         use crate::mls::membership::MlsMembership;
         let membership = MlsMembership::create_new_group(
-            &self.initial_group_name,
+            group_name,
             user,
             self.connection.get_provider(),
         )?;
@@ -195,7 +194,7 @@ impl MlsClient {
 
         log::info!(
             "Connected to group '{}' successfully",
-            self.initial_group_name
+            group_name
         );
 
         Ok(())
@@ -241,39 +240,6 @@ impl MlsClient {
             .await
     }
 
-    /// Sync the selected group ID to match the actual group
-    ///
-    /// When a Welcome message arrives for the group being connected to,
-    /// it may create a new membership with a different group_id than the
-    /// initially created empty group. This method updates selected_group_id
-    /// to point to the correct membership.
-    ///
-    /// This should be called after processing incoming envelopes to ensure
-    /// the selected group ID stays in sync with actual memberships.
-    pub fn sync_selected_group_after_welcome(&mut self) {
-        log::debug!("Checking if group selection needs sync for '{}'", self.initial_group_name);
-
-        // Check if there's a membership for the group we're trying to connect to
-        if let Some((new_group_id, membership)) = self.connection.get_membership_by_name(&self.initial_group_name) {
-            let members = membership.list_members();
-            log::debug!(
-                "Found membership for '{}' with {} members: {:?}",
-                self.initial_group_name,
-                members.len(),
-                members
-            );
-
-            // Check if selected_group_id is different from the actual group
-            if self.selected_group_id.as_ref() != Some(&new_group_id) {
-                log::info!(
-                    "Updated selected group ID for '{}' after Welcome message",
-                    self.initial_group_name
-                );
-                self.selected_group_id = Some(new_group_id);
-            }
-        }
-    }
-
     /// List group members
     ///
     /// Returns the members from the currently selected group.
@@ -315,6 +281,18 @@ impl MlsClient {
         Ok(membership.get_group_name().to_string())
     }
 
+    /// Set the selected group ID (used when a Welcome message is processed)
+    ///
+    /// Updates the currently selected group to the specified group_id.
+    /// This is called when a Welcome message creates a new membership
+    /// that should become the active group for messaging operations.
+    ///
+    /// # Arguments
+    /// * `group_id` - The group ID to select
+    pub fn set_selected_group_id(&mut self, group_id: Vec<u8>) {
+        self.selected_group_id = Some(group_id);
+    }
+
     /// Get reference to MlsConnection (for cli.rs access)
     ///
     /// Provides access to the underlying connection for control loop operations.
@@ -353,11 +331,6 @@ impl MlsClient {
     /// Get the username (for testing)
     pub fn get_username(&self) -> &str {
         self.connection.get_username()
-    }
-
-    /// Get the group name (for testing)
-    pub fn get_group_name(&self) -> &str {
-        &self.initial_group_name
     }
 
     /// Get the API instance (for testing)
@@ -405,9 +378,9 @@ mod tests {
         assert!(client.is_ok(), "Client creation should succeed");
         let c = client.unwrap();
         assert_eq!(c.get_username(), "alice");
-        assert_eq!(c.get_group_name(), "testgroup");
         assert!(!c.is_websocket_connected());
         assert!(c.get_identity().is_none());
+        assert!(c.selected_group_id.is_none(), "No group selected initially");
     }
 
     /// Test that initialize creates user via connection
@@ -456,9 +429,10 @@ mod tests {
         let _ = client.initialize().await;
 
         // Connect to group (WebSocket will fail, but membership is created)
+        // Note: We pass the group name to connect_to_group now
         // We can't test this fully without a mock server, but we can verify the structure
         // For now, just verify that the method exists and compiles
-        assert_eq!(client.get_group_name(), "mygroup");
+        assert_eq!(client.get_username(), "bob");
     }
 
     /// Test that operations delegate to selected membership
