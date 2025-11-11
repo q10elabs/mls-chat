@@ -26,7 +26,7 @@ The server uses SQLite in WAL mode to persist data.
 ## Client usage
 
 The directory `client` contains client programs (`client/rust` for a
-Rust client; `client/node` for a Node.js client).
+Rust client).
 
 The general function of the client is to create/connect to a MLS group
 and let the user chat with other members of the group:
@@ -41,12 +41,17 @@ Run the client with:
    ./client --server hostname:NNNN <groupname> <username>
 ```
 
+(IMPORTANT: if you wish to try a multi-client conversation on a single
+computer, give each client a separate config directory with the
+`--config` flag. This is not needed when running the client from
+different computers or unix accounts.)
+
 The client offers the user a simple command line interface at the bottom of the screen.
 
 The following commands are supported:
 
-- `/invite username`: invite `username` to the current group. Only available if the user created the group (is an administrator).
-- `/list`: list the users in the current group. The text `(admin)` is added next to user names who are admin in the group.
+- `/invite username`: invite `username` to the current group.
+- `/list`: list the users in the current group.
 
 When the user enters text that does not start with `/`, this is
 interpreted as a message to send to the current group.
@@ -65,4 +70,5 @@ And control messages (from commands) are printed as:
   #groupname   action...
 ```
 
-The state of the client (in particular user keys) are stored in the `~/.mlschat` directory.
+The state of the client (in particular user keys) are stored in the
+`~/.mlschat` directory. You can override this with `--config`.

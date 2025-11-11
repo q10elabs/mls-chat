@@ -37,8 +37,7 @@ Content Guidelines:
 
 ## High-level map of the repository structure for quick context
 
-- `client/node`: client using Node.js
-- `client/python`: client using Python
+- `client/rust`: client using Rust
 - `server`: server program (rust)
 
 ## Product vision for the project
@@ -146,15 +145,3 @@ Commit Message Generation Process:
 Maintain an explanatory comment at the top of each source file that
 provides an overview of the main items defined in that file. Update
 this comment when updating the rest of the file.
-
-## UI Implementation Guidelines
-Guidelines to follow for all UI changes
-
-- The user prefers to reuse the existing @BackButton.tsx component for back buttons rather than implementing a custom back button.
-
-- Error handling in the codebase is standardized using the `handleErrors` utility from @Errors.ts. Service and presentation layer methods that may throw are wrapped in `handleErrors`, which returns a neverthrow `Result` type (ok or err). This allows UI components to handle errors in a consistent, type-safe way, showing user feedback (e.g., toast notifications) based on the `Result`. This approach avoids unhandled exceptions and centralizes error management.
-
----
-
-## How to Create New Project Rules
-When prompted to add new rules (.mdc), follow the instructions in .rules/how-to-create-rules.md
