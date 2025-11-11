@@ -50,7 +50,7 @@ and let the user chat with other members of the group:
 Run the client with:
 
 ```
-   ./client --server hostname:NNNN <groupname> <username>
+   ./client --server http://hostname:NNNN <groupname> <username>
 ```
 
 (IMPORTANT: if you wish to try a multi-client conversation on a single
@@ -76,12 +76,6 @@ up as regular text) with the following format:
   #groupname <username>  message...
 ```
 
-And control messages (from commands) are printed as:
-
-```
-  #groupname   action...
-```
-
 The state of the client (in particular user keys) are stored in the
 `~/.mlschat` directory. You can override this with `--config`.
 
@@ -97,3 +91,14 @@ become correct and actually offer the security guarantees of MLS:
   Currently a malicious client can "take over" the client of an existing user.
 
 The list above is not exhaustive (some additional features may also be required - we did not check).
+
+Additionally, the following desirable features for a chat program are
+also missing:
+
+- ability to change the username for a client. Currently the
+  communication and membership is keyed on the username string.
+
+- ability to switch groups in the client CLI. Currently the client
+  code tracks multiple MLS groups internally but the CLI code can only
+  send messages to the latest group joined.
+
