@@ -3,6 +3,9 @@
 This project defines a simple server and client tools that demonstrate
 how to use OpenMLS to define a simple group chat application.
 
+WARNING: This implementation is not sufficiently complete to be
+correct and safe. See the section "Shortcomings" below.
+
 ## Server usage
 
 The server program is responsible for:
@@ -72,3 +75,16 @@ And control messages (from commands) are printed as:
 
 The state of the client (in particular user keys) are stored in the
 `~/.mlschat` directory. You can override this with `--config`.
+
+## Shortcomings / disclaimers
+
+At least the following features are REQUIRED for the implementation to
+become correct and actually offer the security guarantees of MLS:
+
+- server-side durable buffering of messages, and a "catch up" API for clients to receive all messages they may have missed since they last connected.
+  With the current implementation, if a client is not connected when other clients update the group membership, the disconnected client cannot re-sync.
+
+- stronger authentication of clients to the server.
+  Currently a malicious client can "take over" the client of an existing user.
+
+The list above is not exhaustive (some additional features may also be required - we did not check).
