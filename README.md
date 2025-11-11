@@ -1,10 +1,19 @@
 # OpenMLS demonstration tools
 
 This project defines a simple server and client tools that demonstrate
-how to use OpenMLS to define a simple group chat application.
+how to use [OpenMLS](https://openmls.tech/)
+([github](https://github.com/openmls/openmls)) to define a simple
+group chat application.
 
-WARNING: This implementation is not sufficiently complete to be
-correct and safe. See the section "Shortcomings" below.
+For context, MLS ([Message Layer
+Security](https://en.wikipedia.org/wiki/Messaging_Layer_Security)) is
+the IETF standard ([RFC
+9420](https://www.rfc-editor.org/rfc/rfc9420.html)) derived from the
+Signal and Whatsapp end-to-end encryption protocols, with improvements.
+
+**WARNING: The code in this repository is not sufficiently
+complete to be correct and safe for use in the same use cases as
+Signal. See the section "Limitations / Disclaimers" below.**
 
 ## Server usage
 
@@ -76,7 +85,7 @@ And control messages (from commands) are printed as:
 The state of the client (in particular user keys) are stored in the
 `~/.mlschat` directory. You can override this with `--config`.
 
-## Shortcomings / disclaimers
+## Limitations / disclaimers
 
 At least the following features are REQUIRED for the implementation to
 become correct and actually offer the security guarantees of MLS:
