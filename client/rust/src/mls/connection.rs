@@ -673,6 +673,18 @@ impl MlsConnection {
         self.websocket.as_ref()
     }
 
+    /// Set the WebSocket connection (primarily for testing)
+    ///
+    /// Replaces the current WebSocket with the provided one. Used in tests to inject
+    /// mock implementations without requiring real network connections.
+    ///
+    /// # Arguments
+    /// * `websocket` - New WebSocket handler to use
+    #[cfg(test)]
+    pub fn set_websocket(&mut self, websocket: MessageHandler) {
+        self.websocket = Some(websocket);
+    }
+
     /// Add a membership to the connection's HashMap
     ///
     /// Used when creating or loading a group outside of the Welcome message flow.
@@ -1007,6 +1019,9 @@ mod tests {
         // Initialize Bob's user (server registration will fail, but user is created locally)
         let _ = bob_connection.initialize().await;
 
+        // Inject mock WebSocket for testing
+        bob_connection.set_websocket(MessageHandler::new_mock());
+
         // Generate Bob's key package for Alice to use
         let bob_user = bob_connection.get_user().unwrap();
         let bob_key_package = crypto::generate_key_package_bundle(
@@ -1095,6 +1110,9 @@ mod tests {
             MlsConnection::new_with_storage_path("http://localhost:4000", "bob", &bob_storage)
                 .unwrap();
         let _ = bob_connection.initialize().await;
+
+        // Inject mock WebSocket for testing
+        bob_connection.set_websocket(MessageHandler::new_mock());
 
         // Alice invites Bob
         let bob_user = bob_connection.get_user().unwrap();
@@ -1195,6 +1213,9 @@ mod tests {
             MlsConnection::new_with_storage_path("http://localhost:4000", "bob", &bob_storage)
                 .unwrap();
         let _ = bob_connection.initialize().await;
+
+        // Inject mock WebSocket for testing
+        bob_connection.set_websocket(MessageHandler::new_mock());
 
         let bob_user = bob_connection.get_user().unwrap();
         let bob_key_package = crypto::generate_key_package_bundle(

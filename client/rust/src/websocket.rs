@@ -65,6 +65,31 @@ impl MessageHandler {
         })
     }
 
+    /// Create a mock WebSocket handler for testing
+    ///
+    /// Creates a MessageHandler with unbounded in-memory channels that don't
+    /// require a network connection. Suitable for unit tests that need to
+    /// exercise code paths involving WebSocket operations without actual networking.
+    #[cfg(test)]
+    pub fn new_mock() -> Self {
+        let (tx, rx) = futures::channel::mpsc::unbounded::<Message>();
+        let (tx_out, rx_out) = futures::channel::mpsc::unbounded::<Message>();
+
+        // Spawn a task to forward messages from the send channel to the receive channel
+        // This allows the mock to accept sent messages without a real WebSocket
+        tokio::spawn(async move {
+            let mut rx = rx;
+            while let Some(msg) = rx.next().await {
+                let _ = tx_out.unbounded_send(msg);
+            }
+        });
+
+        Self {
+            sender: tx,
+            receiver: rx_out,
+        }
+    }
+
     /// Subscribe to a group
     pub async fn subscribe_to_group(&self, group_id: &str) -> Result<()> {
         let message = SubscribeMessage {
