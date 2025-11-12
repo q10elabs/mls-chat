@@ -12,12 +12,8 @@ use rusqlite::params;
 
 /// Generate a KeyPackageUpload payload for testing
 fn generate_keypackage_upload(username: &str) -> KeyPackageUpload {
-    use tempfile::tempdir;
-
-    let temp_dir = tempdir().expect("Failed to create temp dir");
-    let db_path = temp_dir.path().join("test.db");
     let provider =
-        mls_chat_client::provider::MlsProvider::new(&db_path).expect("Failed to create provider");
+        mls_chat_client::provider::MlsProvider::new_in_memory().expect("Failed to create provider");
 
     let (credential, sig_key) =
         crypto::generate_credential_with_key(username).expect("Failed to generate credential");
@@ -61,13 +57,9 @@ async fn spawn_server_with_pool() -> (String, DbPool) {
 
 /// Helper function to generate a valid KeyPackage for testing
 fn generate_test_key_package(username: &str) -> Vec<u8> {
-    // Create a temporary provider for key package generation
-    use tempfile::tempdir;
-
-    let temp_dir = tempdir().expect("Failed to create temp dir");
-    let db_path = temp_dir.path().join("test.db");
+    // Create an in-memory provider for key package generation
     let provider =
-        mls_chat_client::provider::MlsProvider::new(&db_path).expect("Failed to create provider");
+        mls_chat_client::provider::MlsProvider::new_in_memory().expect("Failed to create provider");
 
     // Generate credential and signature key
     let (credential, sig_key) =
