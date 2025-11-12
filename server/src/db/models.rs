@@ -67,13 +67,6 @@ pub struct BackupResponse {
     pub timestamp: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MessagePayload {
-    pub group_id: String,
-    pub sender: String,
-    pub encrypted_content: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,21 +100,5 @@ mod tests {
 
         assert_eq!(deserialized.username, "bob");
         assert_eq!(deserialized.key_package, key_package);
-    }
-
-    #[test]
-    fn test_message_payload_serialization() {
-        let payload = MessagePayload {
-            group_id: "group_001".to_string(),
-            sender: "alice".to_string(),
-            encrypted_content: "encrypted_msg_data".to_string(),
-        };
-
-        let json = serde_json::to_string(&payload).expect("Serialization failed");
-        let deserialized: MessagePayload =
-            serde_json::from_str(&json).expect("Deserialization failed");
-
-        assert_eq!(deserialized.group_id, "group_001");
-        assert_eq!(deserialized.sender, "alice");
     }
 }
