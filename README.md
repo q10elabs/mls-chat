@@ -95,10 +95,12 @@ The list above is not exhaustive (some additional features may also be required 
 Additionally, the following desirable features for a chat program are
 also missing:
 
+- separation of roles within one group. Currently all the users can
+  invite new members.
+
 - ability to change the username for a client. Currently the
   communication and membership is keyed on the username string.
 
 - ability to switch groups in the client CLI. Currently the client
   code tracks multiple MLS groups internally but the CLI code can only
   send messages to the latest group joined.
-
