@@ -384,7 +384,10 @@ impl MlsConnection {
     ///     // Welcome message was processed, update selected group
     /// }
     /// ```
-    pub async fn process_incoming_envelope(&mut self, envelope: MlsMessageEnvelope) -> Result<Option<Vec<u8>>> {
+    pub async fn process_incoming_envelope(
+        &mut self,
+        envelope: MlsMessageEnvelope,
+    ) -> Result<Option<Vec<u8>>> {
         match envelope {
             MlsMessageEnvelope::WelcomeMessage {
                 inviter,
@@ -646,7 +649,10 @@ impl MlsConnection {
     /// # Returns
     /// * `Some((group_id, &MlsMembership))` if membership exists
     /// * `None` if no membership for this group name
-    pub fn get_membership_by_name(&self, group_name: &str) -> Option<(Vec<u8>, &MlsMembership<'static>)> {
+    pub fn get_membership_by_name(
+        &self,
+        group_name: &str,
+    ) -> Option<(Vec<u8>, &MlsMembership<'static>)> {
         self.memberships
             .iter()
             .find(|(_, membership)| membership.get_group_name() == group_name)

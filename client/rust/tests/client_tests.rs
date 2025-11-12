@@ -559,7 +559,9 @@ async fn test_websocket_message_exchange() {
         .connect_to_group("chatgroup")
         .await
         .expect("Failed to connect Alice");
-    bob.connect_to_group("chatgroup").await.expect("Failed to connect Bob");
+    bob.connect_to_group("chatgroup")
+        .await
+        .expect("Failed to connect Bob");
 
     // Alice sends a message
     alice
@@ -630,7 +632,9 @@ async fn test_sender_skips_own_application_message() {
         .connect_to_group("testgroup")
         .await
         .expect("Failed to connect Alice");
-    bob.connect_to_group("testgroup").await.expect("Failed to connect Bob");
+    bob.connect_to_group("testgroup")
+        .await
+        .expect("Failed to connect Bob");
 
     // Alice invites Bob to her group
     alice

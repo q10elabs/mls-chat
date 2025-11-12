@@ -42,7 +42,11 @@ impl WsServer {
     ) {
         let mut clients = self.clients.write().await;
         clients.insert(client_id.clone(), tx);
-        log::info!("[REGISTER] Client '{}' registered. Total clients: {}", client_id, clients.len());
+        log::info!(
+            "[REGISTER] Client '{}' registered. Total clients: {}",
+            client_id,
+            clients.len()
+        );
     }
 
     /// Unregister a client connection
@@ -60,8 +64,12 @@ impl WsServer {
         }
 
         if was_present {
-            log::info!("[UNREGISTER] Client '{}' unregistered. Remaining clients: {}. Was in groups: {:?}",
-                       client_id, clients.len(), removed_from_groups);
+            log::info!(
+                "[UNREGISTER] Client '{}' unregistered. Remaining clients: {}. Was in groups: {:?}",
+                client_id,
+                clients.len(),
+                removed_from_groups
+            );
         } else {
             log::warn!("[UNREGISTER] Client '{}' was not registered", client_id);
         }
@@ -74,8 +82,12 @@ impl WsServer {
             .entry(group_id.clone())
             .or_insert_with(HashSet::new)
             .insert(client_id.clone());
-        log::info!("[SUBSCRIBE] Client '{}' subscribed to group '{}'. Group now has {} members",
-                   client_id, group_id, groups.get(&group_id).map(|m| m.len()).unwrap_or(0));
+        log::info!(
+            "[SUBSCRIBE] Client '{}' subscribed to group '{}'. Group now has {} members",
+            client_id,
+            group_id,
+            groups.get(&group_id).map(|m| m.len()).unwrap_or(0)
+        );
     }
 
     /// Unsubscribe a client from a group
@@ -87,7 +99,11 @@ impl WsServer {
                 log::info!("[UNSUBSCRIBE] Client '{}' unsubscribed from group '{}'. Group now has {} members",
                            client_id, group_id, members.len());
             } else {
-                log::warn!("[UNSUBSCRIBE] Client '{}' was not in group '{}'", client_id, group_id);
+                log::warn!(
+                    "[UNSUBSCRIBE] Client '{}' was not in group '{}'",
+                    client_id,
+                    group_id
+                );
             }
         } else {
             log::warn!("[UNSUBSCRIBE] Group '{}' not found", group_id);
@@ -97,10 +113,19 @@ impl WsServer {
     /// Broadcast message to all clients in a group
     pub async fn broadcast_to_group(&self, group_id: &str, message: &str) {
         let groups = self.groups.read().await;
-        log::debug!("[BROADCAST] Looking for group: '{}', available groups: {:?}", group_id, groups.keys().collect::<Vec<_>>());
+        log::debug!(
+            "[BROADCAST] Looking for group: '{}', available groups: {:?}",
+            group_id,
+            groups.keys().collect::<Vec<_>>()
+        );
 
         if let Some(members) = groups.get(group_id) {
-            log::info!("[BROADCAST] Broadcasting to group '{}' with {} members: {:?}", group_id, members.len(), members);
+            log::info!(
+                "[BROADCAST] Broadcasting to group '{}' with {} members: {:?}",
+                group_id,
+                members.len(),
+                members
+            );
             let clients = self.clients.read().await;
             for member in members {
                 log::debug!("[BROADCAST] Checking if member '{}' is registered in clients (total clients: {})", member, clients.len());
@@ -108,11 +133,18 @@ impl WsServer {
                     log::info!("[BROADCAST] Sending message to client: {}", member);
                     let _ = tx.send(message.to_string());
                 } else {
-                    log::warn!("[BROADCAST] Client '{}' is in group but not in clients map!", member);
+                    log::warn!(
+                        "[BROADCAST] Client '{}' is in group but not in clients map!",
+                        member
+                    );
                 }
             }
         } else {
-            log::warn!("[BROADCAST] No members found for group '{}'. Groups in system: {:?}", group_id, groups.keys().collect::<Vec<_>>());
+            log::warn!(
+                "[BROADCAST] No members found for group '{}'. Groups in system: {:?}",
+                group_id,
+                groups.keys().collect::<Vec<_>>()
+            );
         }
     }
 

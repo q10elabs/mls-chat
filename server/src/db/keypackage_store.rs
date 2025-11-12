@@ -523,10 +523,12 @@ mod tests {
         .unwrap();
 
         // Reserve the key
-        let reserved = KeyPackageStore::reserve_key_package_with_timeout(&pool, "charlie", &group_id, "alice", 60)
-            .await
-            .unwrap()
-            .expect("Should reserve successfully");
+        let reserved = KeyPackageStore::reserve_key_package_with_timeout(
+            &pool, "charlie", &group_id, "alice", 60,
+        )
+        .await
+        .unwrap()
+        .expect("Should reserve successfully");
 
         assert_eq!(reserved.keypackage_ref, keypackage_ref);
         assert!(reserved.reservation_expires_at > 0);
@@ -704,15 +706,27 @@ mod tests {
         }
 
         // Reserve keys concurrently (simulated)
-        let reserved1 = KeyPackageStore::reserve_key_package_with_timeout(&pool, "frank", &vec![0xaa], "alice", 60)
-            .await
-            .unwrap()
-            .expect("First reservation should succeed");
+        let reserved1 = KeyPackageStore::reserve_key_package_with_timeout(
+            &pool,
+            "frank",
+            &vec![0xaa],
+            "alice",
+            60,
+        )
+        .await
+        .unwrap()
+        .expect("First reservation should succeed");
 
-        let reserved2 = KeyPackageStore::reserve_key_package_with_timeout(&pool, "frank", &vec![0xbb], "bob", 60)
-            .await
-            .unwrap()
-            .expect("Second reservation should succeed");
+        let reserved2 = KeyPackageStore::reserve_key_package_with_timeout(
+            &pool,
+            "frank",
+            &vec![0xbb],
+            "bob",
+            60,
+        )
+        .await
+        .unwrap()
+        .expect("Second reservation should succeed");
 
         // Verify different keys were reserved
         assert_ne!(reserved1.keypackage_ref, reserved2.keypackage_ref);
@@ -785,10 +799,12 @@ mod tests {
         .unwrap();
 
         // Reserve the key
-        let _reserved = KeyPackageStore::reserve_key_package_with_timeout(&pool, "heidi", &group_id, "alice", 60)
-            .await
-            .unwrap()
-            .expect("Should reserve");
+        let _reserved = KeyPackageStore::reserve_key_package_with_timeout(
+            &pool, "heidi", &group_id, "alice", 60,
+        )
+        .await
+        .unwrap()
+        .expect("Should reserve");
 
         // Manually expire the reservation
         let conn = pool.lock().await;
@@ -805,10 +821,11 @@ mod tests {
             .unwrap();
 
         // Key should be available for reuse
-        let reserved_again = KeyPackageStore::reserve_key_package_with_timeout(&pool, "heidi", &group_id, "bob", 60)
-            .await
-            .unwrap()
-            .expect("Should reserve after timeout");
+        let reserved_again =
+            KeyPackageStore::reserve_key_package_with_timeout(&pool, "heidi", &group_id, "bob", 60)
+                .await
+                .unwrap()
+                .expect("Should reserve after timeout");
 
         assert_eq!(reserved_again.keypackage_ref, keypackage_ref);
     }

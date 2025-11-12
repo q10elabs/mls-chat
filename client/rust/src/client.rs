@@ -179,11 +179,8 @@ impl MlsClient {
 
         // Try to load or create membership for the specified group
         use crate::mls::membership::MlsMembership;
-        let membership = MlsMembership::create_new_group(
-            group_name,
-            user,
-            self.connection.get_provider(),
-        )?;
+        let membership =
+            MlsMembership::create_new_group(group_name, user, self.connection.get_provider())?;
 
         // Store the group ID as selected
         let group_id = membership.get_group_id().to_vec();
@@ -195,10 +192,7 @@ impl MlsClient {
         // Subscribe to the group to receive messages
         self.connection.subscribe_to_group(&group_id).await?;
 
-        log::info!(
-            "Connected to group '{}' successfully",
-            group_name
-        );
+        log::info!("Connected to group '{}' successfully", group_name);
 
         Ok(())
     }
