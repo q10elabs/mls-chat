@@ -70,18 +70,7 @@ struct RegisterUserRequest {
 }
 
 #[derive(Deserialize)]
-struct RegisterUserResponse {
-    #[allow(dead_code)]
-    id: i64,
-    #[allow(dead_code)]
-    username: String,
-    #[allow(dead_code)]
-    created_at: String,
-}
-
-#[derive(Deserialize)]
 struct UserKeyResponse {
-    #[allow(dead_code)]
     username: String,
     key_package: Vec<u8>,
 }
@@ -177,6 +166,7 @@ impl ServerApi {
 
         if response.status().is_success() {
             let user_key: UserKeyResponse = response.json().await?;
+            assert!(user_key.username == username);
             Ok(user_key.key_package)
         } else if response.status() == 404 {
             Err(NetworkError::Server("User not found".to_string()).into())
