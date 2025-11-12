@@ -85,6 +85,13 @@ Before making any code changes other than the changelog, you must follow this tw
 6. Assistant: [proceeds with implementation]
 
 
+## Run linters after reporting changes completes
+
+Before telling the user your work is complete, do:
+
+- run `cargo fmt` on the Rust directories where you have performed code changes.
+- run `cargo clippy --all-targets` to find linter warnings.
+
 ## Git workflow and commit practices including commit message formatting
 
 Git Operation Rules:
