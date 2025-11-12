@@ -51,7 +51,7 @@ base64 = "0.22"
 
 [dev-dependencies]
 # Server for integration tests
-mls-chat-server = { path = "../../server" }
+mls-chat-server = { path = "../../server", features = ["test_utils"] }
 tempfile = "3.14"
 tokio-test = "0.4"
 actix-web = "4.11"

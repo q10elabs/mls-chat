@@ -9,15 +9,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Message types for WebSocket communication
-#[derive(Message, Clone, Debug)]
-#[rtype(result = "()")]
-pub struct WsMessage {
-    pub sender: String,
-    pub group_id: String,
-    pub encrypted_content: String,
-}
-
 /// WebSocket server state - manages client connections and routing
 pub struct WsServer {
     pub clients: Arc<RwLock<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,

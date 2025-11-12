@@ -7,6 +7,7 @@ use crate::handlers::{
 /// Provides a reusable function to create and configure the HTTP server
 /// for use in both the main binary and tests.
 use actix_web::{middleware, web, App, HttpServer};
+#[cfg(any(test, feature = "test_utils"))]
 use std::sync::Arc;
 
 /// Create a configured HTTP server
@@ -66,7 +67,8 @@ pub fn create_http_server(
     Ok(server)
 }
 
-/// Create a test HTTP server with custom database pool
+/// Create a test HTTP server with custom database pool.
+/// Used by integration tests (both server and client). Exposed publicly for cross-crate test coordination.
 ///
 /// Allows tests to provide their own database pool, enabling testing of
 /// data persistence across multiple server instantiations. The server binds
@@ -95,6 +97,7 @@ pub fn create_http_server(
 ///
 /// // Data from first server is still available in second server
 /// ```
+#[cfg(any(test, feature = "test_utils"))]
 pub fn create_test_http_server_with_pool(
     pool: web::Data<DbPool>,
 ) -> std::io::Result<(actix_web::dev::Server, String)> {
@@ -143,7 +146,9 @@ pub fn create_test_http_server_with_pool(
     Ok((server, addr_str))
 }
 
-/// Create a test HTTP server with in-memory database and WebSocket server
+/// Create a test HTTP server with in-memory database and WebSocket server.
+/// Used by both server internal tests and client integration tests.
+/// Available during testing or with `test_utils` feature flag enabled.
 ///
 /// This is a convenience function for tests that need a fully configured
 /// server without having to manually set up the pool and ws_server.
@@ -158,6 +163,7 @@ pub fn create_test_http_server_with_pool(
 /// let client = reqwest::Client::new();
 /// let resp = client.get(&format!("http://{}/health", addr)).send().await?;
 /// ```
+#[cfg(any(test, feature = "test_utils"))]
 pub fn create_test_http_server() -> std::io::Result<(actix_web::dev::Server, String)> {
     let pool = web::Data::new(crate::db::create_test_pool());
     create_test_http_server_with_pool(pool)

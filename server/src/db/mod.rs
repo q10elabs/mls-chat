@@ -19,7 +19,10 @@ pub fn create_pool(db_path: &str) -> SqliteResult<DbPool> {
     Ok(Arc::new(Mutex::new(conn)))
 }
 
-/// Create an in-memory database for testing
+/// Create an in-memory database for testing.
+/// Used by both server internal tests and client integration tests.
+/// Available during testing or with `test_utils` feature flag enabled.
+#[cfg(any(test, feature = "test_utils"))]
 pub fn create_test_pool() -> DbPool {
     let conn = Connection::open_in_memory().expect("Failed to create in-memory DB");
     init::initialize_database(&conn).expect("Failed to initialize DB");
@@ -70,27 +73,6 @@ impl Database {
 
         let user = stmt
             .query_row(params![username], |row| {
-                Ok(User {
-                    id: row.get(0)?,
-                    username: row.get(1)?,
-                    key_package: row.get(2)?,
-                    created_at: row.get(3)?,
-                })
-            })
-            .optional()?;
-
-        Ok(user)
-    }
-
-    /// Get user by ID
-    pub async fn get_user_by_id(pool: &DbPool, user_id: i64) -> SqliteResult<Option<User>> {
-        let conn = pool.lock().await;
-
-        let mut stmt =
-            conn.prepare("SELECT id, username, key_package, created_at FROM users WHERE id = ?1")?;
-
-        let user = stmt
-            .query_row(params![user_id], |row| {
                 Ok(User {
                     id: row.get(0)?,
                     username: row.get(1)?,
@@ -179,7 +161,10 @@ impl Database {
         Ok(message)
     }
 
-    /// Get messages for a group
+    /// Get messages for a group.
+    /// Used by both server internal tests and client integration tests.
+    /// Available during testing or with `test_utils` feature flag enabled.
+    #[cfg(any(test, feature = "test_utils"))]
     pub async fn get_group_messages(
         pool: &DbPool,
         group_id: i64,

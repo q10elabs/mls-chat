@@ -84,39 +84,6 @@ pub struct ReservedKeyPackage {
 pub struct KeyPackageStore;
 
 impl KeyPackageStore {
-    /// Initialize the keypackages table schema
-    pub async fn initialize_schema(pool: &DbPool) -> SqliteResult<()> {
-        let conn = pool.lock().await;
-
-        conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS keypackages (
-                keypackage_ref BLOB NOT NULL,
-                username TEXT NOT NULL,
-                keypackage_bytes BLOB NOT NULL,
-                uploaded_at INTEGER NOT NULL,
-                status TEXT NOT NULL DEFAULT 'available',
-                reservation_id TEXT UNIQUE,
-                reservation_expires_at INTEGER,
-                reserved_by TEXT,
-                spent_at INTEGER,
-                spent_by TEXT,
-                group_id BLOB,
-                not_after INTEGER NOT NULL,
-                credential_hash BLOB,
-                ciphersuite INTEGER,
-                PRIMARY KEY (username, keypackage_ref)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_user_status ON keypackages(username, status);
-            CREATE INDEX IF NOT EXISTS idx_user_expiry ON keypackages(username, not_after);
-            CREATE INDEX IF NOT EXISTS idx_reservation ON keypackages(reservation_id);
-            "#,
-        )?;
-
-        Ok(())
-    }
-
     /// Save a new KeyPackage to the pool
     pub async fn save_key_package(
         pool: &DbPool,
@@ -151,80 +118,6 @@ impl KeyPackageStore {
         Ok(())
     }
 
-    /// Get a KeyPackage by its reference hash
-    pub async fn get_key_package(
-        pool: &DbPool,
-        keypackage_ref: &[u8],
-    ) -> SqliteResult<Option<KeyPackageData>> {
-        let conn = pool.lock().await;
-
-        let mut stmt = conn.prepare(
-            "SELECT keypackage_ref, username, keypackage_bytes, uploaded_at, status, not_after, credential_hash, ciphersuite
-             FROM keypackages
-             WHERE keypackage_ref = ?1",
-        )?;
-
-        let result = stmt
-            .query_row(params![keypackage_ref], |row| {
-                let status_str: String = row.get(4)?;
-                let status =
-                    KeyPackageStatus::from_str(&status_str).unwrap_or(KeyPackageStatus::Available);
-
-                Ok(KeyPackageData {
-                    keypackage_ref: row.get(0)?,
-                    username: row.get(1)?,
-                    keypackage_bytes: row.get(2)?,
-                    uploaded_at: row.get(3)?,
-                    status,
-                    not_after: row.get(5)?,
-                    credential_hash: row.get(6)?,
-                    ciphersuite: row.get(7)?,
-                })
-            })
-            .optional()?;
-
-        Ok(result)
-    }
-
-    /// List available KeyPackages for a user (filters by status and expiry)
-    pub async fn list_available_for_user(
-        pool: &DbPool,
-        username: &str,
-    ) -> SqliteResult<Vec<KeyPackageMetadata>> {
-        let conn = pool.lock().await;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
-        let mut stmt = conn.prepare(
-            "SELECT keypackage_ref, username, not_after, status, credential_hash, ciphersuite
-             FROM keypackages
-             WHERE username = ?1 AND status = ?2 AND not_after > ?3
-             ORDER BY uploaded_at ASC",
-        )?;
-
-        let rows = stmt.query_map(
-            params![username, KeyPackageStatus::Available.as_str(), now],
-            |row| {
-                let status_str: String = row.get(3)?;
-                let status =
-                    KeyPackageStatus::from_str(&status_str).unwrap_or(KeyPackageStatus::Available);
-
-                Ok(KeyPackageMetadata {
-                    keypackage_ref: row.get(0)?,
-                    username: row.get(1)?,
-                    not_after: row.get(2)?,
-                    status,
-                    credential_hash: row.get(4)?,
-                    ciphersuite: row.get(5)?,
-                })
-            },
-        )?;
-
-        let metadata: Vec<KeyPackageMetadata> = rows.collect::<Result<Vec<_>, _>>()?;
-        Ok(metadata)
-    }
 
     /// Reserve a KeyPackage with a custom timeout (in seconds)
     /// Returns ReservedKeyPackage or None if no available keys
@@ -350,29 +243,6 @@ impl KeyPackageStore {
         Ok(())
     }
 
-    /// Cleanup expired KeyPackages (based on not_after timestamp)
-    /// Returns the number of keys removed
-    pub async fn cleanup_expired(pool: &DbPool) -> SqliteResult<usize> {
-        let conn = pool.lock().await;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
-        let deleted = conn.execute(
-            "DELETE FROM keypackages WHERE not_after <= ?1",
-            params![now],
-        )?;
-
-        Ok(deleted)
-    }
-
-    /// Release expired reservations (convert back to available)
-    /// Returns the number of reservations released
-    pub async fn release_expired_reservations(pool: &DbPool) -> SqliteResult<usize> {
-        let conn = pool.lock().await;
-        Self::release_expired_reservations_sync(&conn, None)
-    }
 
     /// Internal helper to release expired reservations (synchronous, optionally filtered by username)
     fn release_expired_reservations_sync(
@@ -425,6 +295,141 @@ impl KeyPackageStore {
 
         let count: i64 = stmt.query_row(params![username, status.as_str()], |row| row.get(0))?;
         Ok(count as usize)
+    }
+}
+
+#[cfg(test)]
+impl KeyPackageStore {
+    /// Initialize the keypackages table schema
+    pub async fn initialize_schema(pool: &DbPool) -> SqliteResult<()> {
+        let conn = pool.lock().await;
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS keypackages (
+                keypackage_ref BLOB NOT NULL,
+                username TEXT NOT NULL,
+                keypackage_bytes BLOB NOT NULL,
+                uploaded_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'available',
+                reservation_id TEXT UNIQUE,
+                reservation_expires_at INTEGER,
+                reserved_by TEXT,
+                spent_at INTEGER,
+                spent_by TEXT,
+                group_id BLOB,
+                not_after INTEGER NOT NULL,
+                credential_hash BLOB,
+                ciphersuite INTEGER,
+                PRIMARY KEY (username, keypackage_ref)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_status ON keypackages(username, status);
+            CREATE INDEX IF NOT EXISTS idx_user_expiry ON keypackages(username, not_after);
+            CREATE INDEX IF NOT EXISTS idx_reservation ON keypackages(reservation_id);
+            "#,
+        )?;
+
+        Ok(())
+    }
+
+    /// Get a KeyPackage by its reference hash
+    pub async fn get_key_package(
+        pool: &DbPool,
+        keypackage_ref: &[u8],
+    ) -> SqliteResult<Option<KeyPackageData>> {
+        let conn = pool.lock().await;
+
+        let mut stmt = conn.prepare(
+            "SELECT keypackage_ref, username, keypackage_bytes, uploaded_at, status, not_after, credential_hash, ciphersuite
+             FROM keypackages
+             WHERE keypackage_ref = ?1",
+        )?;
+
+        let result = stmt
+            .query_row(params![keypackage_ref], |row| {
+                let status_str: String = row.get(4)?;
+                let status =
+                    KeyPackageStatus::from_str(&status_str).unwrap_or(KeyPackageStatus::Available);
+
+                Ok(KeyPackageData {
+                    keypackage_ref: row.get(0)?,
+                    username: row.get(1)?,
+                    keypackage_bytes: row.get(2)?,
+                    uploaded_at: row.get(3)?,
+                    status,
+                    not_after: row.get(5)?,
+                    credential_hash: row.get(6)?,
+                    ciphersuite: row.get(7)?,
+                })
+            })
+            .optional()?;
+
+        Ok(result)
+    }
+
+    /// List available KeyPackages for a user (filters by status and expiry)
+    pub async fn list_available_for_user(
+        pool: &DbPool,
+        username: &str,
+    ) -> SqliteResult<Vec<KeyPackageMetadata>> {
+        let conn = pool.lock().await;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let mut stmt = conn.prepare(
+            "SELECT keypackage_ref, username, not_after, status, credential_hash, ciphersuite
+             FROM keypackages
+             WHERE username = ?1 AND status = ?2 AND not_after > ?3
+             ORDER BY uploaded_at ASC",
+        )?;
+
+        let rows = stmt.query_map(
+            params![username, KeyPackageStatus::Available.as_str(), now],
+            |row| {
+                let status_str: String = row.get(3)?;
+                let status =
+                    KeyPackageStatus::from_str(&status_str).unwrap_or(KeyPackageStatus::Available);
+
+                Ok(KeyPackageMetadata {
+                    keypackage_ref: row.get(0)?,
+                    username: row.get(1)?,
+                    not_after: row.get(2)?,
+                    status,
+                    credential_hash: row.get(4)?,
+                    ciphersuite: row.get(5)?,
+                })
+            },
+        )?;
+
+        let metadata: Vec<KeyPackageMetadata> = rows.collect::<Result<Vec<_>, _>>()?;
+        Ok(metadata)
+    }
+
+    /// Cleanup expired KeyPackages (based on not_after timestamp)
+    /// Returns the number of keys removed
+    pub async fn cleanup_expired(pool: &DbPool) -> SqliteResult<usize> {
+        let conn = pool.lock().await;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let deleted = conn.execute(
+            "DELETE FROM keypackages WHERE not_after <= ?1",
+            params![now],
+        )?;
+
+        Ok(deleted)
+    }
+
+    /// Release expired reservations (convert back to available)
+    /// Returns the number of reservations released
+    pub async fn release_expired_reservations(pool: &DbPool) -> SqliteResult<usize> {
+        let conn = pool.lock().await;
+        Self::release_expired_reservations_sync(&conn, None)
     }
 }
 
