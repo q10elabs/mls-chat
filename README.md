@@ -1,4 +1,4 @@
-# OpenMLS demonstration tools
+# OpenMLS demo - server/client chat with E2EE
 
 This project contains a simple server and client tools that demonstrate
 how to use [OpenMLS](https://openmls.tech/)
@@ -9,7 +9,7 @@ For context, MLS ([Message Layer
 Security](https://en.wikipedia.org/wiki/Messaging_Layer_Security)) is
 the IETF standard ([RFC
 9420](https://www.rfc-editor.org/rfc/rfc9420.html)) derived from the
-Signal and Whatsapp end-to-end encryption protocols, with improvements.
+Signal and Whatsapp **end-to-end encryption** (E2EE) protocols, with improvements.
 
 **WARNING: The code in this repository is not sufficiently
 complete to be correct and safe for use in the same use cases as
