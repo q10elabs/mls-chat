@@ -1,8 +1,8 @@
 # OpenMLS demonstration tools
 
-This project defines a simple server and client tools that demonstrate
+This project contains a simple server and client tools that demonstrate
 how to use [OpenMLS](https://openmls.tech/)
-([github](https://github.com/openmls/openmls)) to define a simple
+([github](https://github.com/openmls/openmls)) to implement a simple
 group chat application.
 
 For context, MLS ([Message Layer
