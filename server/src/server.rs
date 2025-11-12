@@ -135,7 +135,7 @@ pub fn create_test_http_server_with_pool(
     let addrs = server.addrs();
     let addr_str = addrs
         .first()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "No bind address found"))?
+        .ok_or_else(|| std::io::Error::other("No bind address found"))?
         .to_string();
 
     let server = server.run();

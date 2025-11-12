@@ -9,6 +9,7 @@
 /// - Pool health queries
 use rusqlite::{params, OptionalExtension, Result as SqliteResult};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -30,13 +31,17 @@ impl KeyPackageStatus {
             KeyPackageStatus::Spent => "spent",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for KeyPackageStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "available" => Some(KeyPackageStatus::Available),
-            "reserved" => Some(KeyPackageStatus::Reserved),
-            "spent" => Some(KeyPackageStatus::Spent),
-            _ => None,
+            "available" => Ok(KeyPackageStatus::Available),
+            "reserved" => Ok(KeyPackageStatus::Reserved),
+            "spent" => Ok(KeyPackageStatus::Spent),
+            _ => Err(format!("'{}' is not a valid KeyPackageStatus", s)),
         }
     }
 }
@@ -629,7 +634,7 @@ mod tests {
             &pool,
             "eve",
             &available_ref,
-            &vec![0x01],
+            &[0x01],
             now + 1000,
             None,
             None,
@@ -643,7 +648,7 @@ mod tests {
             &pool,
             "eve",
             &expired_ref,
-            &vec![0x02],
+            &[0x02],
             now - 100,
             None,
             None,
@@ -657,14 +662,14 @@ mod tests {
             &pool,
             "eve",
             &spent_ref,
-            &vec![0x03],
+            &[0x03],
             now + 1000,
             None,
             None,
         )
         .await
         .unwrap();
-        KeyPackageStore::spend_key_package(&pool, &spent_ref, &vec![0xff], "alice")
+        KeyPackageStore::spend_key_package(&pool, &spent_ref, &[0xff], "alice")
             .await
             .unwrap();
 
@@ -696,7 +701,7 @@ mod tests {
                 &pool,
                 "frank",
                 &keypackage_ref,
-                &vec![0x10 + i],
+                &[0x10 + i],
                 now + 1000,
                 None,
                 None,
@@ -709,7 +714,7 @@ mod tests {
         let reserved1 = KeyPackageStore::reserve_key_package_with_timeout(
             &pool,
             "frank",
-            &vec![0xaa],
+            &[0xaa],
             "alice",
             60,
         )
@@ -720,7 +725,7 @@ mod tests {
         let reserved2 = KeyPackageStore::reserve_key_package_with_timeout(
             &pool,
             "frank",
-            &vec![0xbb],
+            &[0xbb],
             "bob",
             60,
         )
@@ -746,7 +751,7 @@ mod tests {
             &pool,
             "grace",
             &keypackage_ref,
-            &vec![0x99],
+            &[0x99],
             not_after,
             None,
             None,
@@ -790,7 +795,7 @@ mod tests {
             &pool,
             "heidi",
             &keypackage_ref,
-            &vec![0xaa],
+            &[0xaa],
             not_after,
             None,
             None,

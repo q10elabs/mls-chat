@@ -1,6 +1,6 @@
 /// Integration tests for REST API endpoints
 /// Tests database operations and error handling through direct DB calls
-use mls_chat_server::db::{Database, DbPool};
+use mls_chat_server::db::Database;
 
 #[tokio::test]
 async fn test_user_registration_workflow() {

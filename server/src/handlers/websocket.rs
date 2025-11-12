@@ -231,7 +231,7 @@ impl Actor for WsActor {
         let fut = async move {
             server.register(client_id, tx).await;
         };
-        let _ = actix::spawn(fut);
+        drop(actix::spawn(fut));
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
@@ -241,7 +241,7 @@ impl Actor for WsActor {
         let fut = async move {
             server.unregister(&client_id).await;
         };
-        let _ = actix::spawn(fut);
+        drop(actix::spawn(fut));
     }
 }
 

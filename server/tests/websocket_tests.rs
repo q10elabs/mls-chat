@@ -403,6 +403,6 @@ async fn test_websocket_subscription_only_protocol() {
     server.unsubscribe("client1", "chat_group").await;
 
     let groups = server.groups.read().await;
-    let group_members = groups.get("chat_group").map(|g| g.clone());
+    let group_members = groups.get("chat_group").cloned();
     assert!(group_members.is_none() || !group_members.unwrap().contains("client1"));
 }
