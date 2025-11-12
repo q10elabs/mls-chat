@@ -58,7 +58,7 @@ async fn test_two_party_invitation_alice_invites_bob() {
         .await
         .expect("Failed to initialize Alice");
     alice
-        .connect_to_group()
+        .connect_to_group("testgroup")
         .await
         .expect("Failed to connect to group");
 
@@ -185,7 +185,7 @@ async fn test_three_party_invitation_sequence() {
             .expect("Failed to create Alice");
     alice.initialize().await.expect("Failed to init Alice");
     alice
-        .connect_to_group()
+        .connect_to_group("groupabc")
         .await
         .expect("Failed to connect Alice");
 
@@ -293,7 +293,7 @@ async fn test_multiple_sequential_invitations() {
         MlsClient::new_with_storage_path(&server_addr, "alice", "big-group", temp_dir_alice.path())
             .expect("Failed to create Alice");
     alice.initialize().await.expect("Failed to init");
-    alice.connect_to_group().await.expect("Failed to connect");
+    alice.connect_to_group("big-group").await.expect("Failed to connect");
 
     // Create and initialize users
     let users = vec!["bob", "carol", "dave", "eve"];
@@ -341,7 +341,7 @@ async fn test_invitation_to_nonexistent_user_fails() {
         MlsClient::new_with_storage_path(&server_addr, "alice", "testgroup", temp_dir_alice.path())
             .expect("Failed to create Alice");
     alice.initialize().await.expect("Failed to init");
-    alice.connect_to_group().await.expect("Failed to connect");
+    alice.connect_to_group("testgroup").await.expect("Failed to connect");
 
     // Try to invite non-existent user
     let result = alice.invite_user("nonexistent-user").await;

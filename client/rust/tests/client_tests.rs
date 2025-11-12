@@ -53,7 +53,7 @@ async fn test_group_creation_stores_mapping() {
 
     // Test that client metadata is properly initialized
     assert_eq!(client.get_username(), "alice");
-    assert_eq!(client.get_group_name(), "mygroup");
+    assert_eq!(client.get_current_group_name().unwrap(), "mygroup");
 }
 
 /// Test 2: Client state transitions correctly
@@ -374,7 +374,7 @@ async fn test_client_server_integration_complete_workflow() {
 
     // Test 2: Connect to group (should create group and register with server)
     client
-        .connect_to_group()
+        .connect_to_group("testgroup")
         .await
         .expect("Failed to connect to group");
 
@@ -431,10 +431,10 @@ async fn test_multiple_clients_same_server() {
 
     // Both should be able to connect to their respective groups
     alice
-        .connect_to_group()
+        .connect_to_group("sharedgroup")
         .await
         .expect("Failed to connect Alice to group");
-    bob.connect_to_group()
+    bob.connect_to_group("sharedgroup")
         .await
         .expect("Failed to connect Bob to group");
 
@@ -464,7 +464,7 @@ async fn test_client_persistence_across_server_restarts() {
         .await
         .expect("Failed to initialize client");
     client
-        .connect_to_group()
+        .connect_to_group("persistent_group")
         .await
         .expect("Failed to connect to group");
 
@@ -556,10 +556,10 @@ async fn test_websocket_message_exchange() {
 
     // Connect both to group
     alice
-        .connect_to_group()
+        .connect_to_group("chatgroup")
         .await
         .expect("Failed to connect Alice");
-    bob.connect_to_group().await.expect("Failed to connect Bob");
+    bob.connect_to_group("chatgroup").await.expect("Failed to connect Bob");
 
     // Alice sends a message
     alice
@@ -627,10 +627,10 @@ async fn test_sender_skips_own_application_message() {
 
     // Both connect to their groups
     alice
-        .connect_to_group()
+        .connect_to_group("testgroup")
         .await
         .expect("Failed to connect Alice");
-    bob.connect_to_group().await.expect("Failed to connect Bob");
+    bob.connect_to_group("testgroup").await.expect("Failed to connect Bob");
 
     // Alice invites Bob to her group
     alice
