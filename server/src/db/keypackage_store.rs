@@ -3,7 +3,7 @@
 ///
 /// This module provides:
 /// - KeyPackage storage with lifecycle status tracking (available, reserved, spent)
-/// - Reservation system with TTL (60s timeout)
+/// - Reservation system with configurable TTL timeout
 /// - Double-spend prevention via status validation
 /// - Expiry-based garbage collection
 /// - Pool health queries
@@ -13,9 +13,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use super::DbPool;
-
-/// Time-to-live for reservations (60 seconds)
-const RESERVATION_TTL_SECONDS: i64 = 60;
 
 /// KeyPackage lifecycle status
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -222,17 +219,6 @@ impl KeyPackageStore {
 
         let metadata: Vec<KeyPackageMetadata> = rows.collect::<Result<Vec<_>, _>>()?;
         Ok(metadata)
-    }
-
-    /// Reserve a KeyPackage for use (with TTL)
-    /// Returns ReservedKeyPackage or None if no available keys
-    pub async fn reserve_key_package(
-        pool: &DbPool,
-        target_username: &str,
-        group_id: &[u8],
-        reserved_by: &str,
-    ) -> SqliteResult<Option<ReservedKeyPackage>> {
-        Self::reserve_key_package_with_timeout(pool, target_username, group_id, reserved_by, RESERVATION_TTL_SECONDS).await
     }
 
     /// Reserve a KeyPackage with a custom timeout (in seconds)
@@ -537,7 +523,7 @@ mod tests {
         .unwrap();
 
         // Reserve the key
-        let reserved = KeyPackageStore::reserve_key_package(&pool, "charlie", &group_id, "alice")
+        let reserved = KeyPackageStore::reserve_key_package_with_timeout(&pool, "charlie", &group_id, "alice", 60)
             .await
             .unwrap()
             .expect("Should reserve successfully");
@@ -718,12 +704,12 @@ mod tests {
         }
 
         // Reserve keys concurrently (simulated)
-        let reserved1 = KeyPackageStore::reserve_key_package(&pool, "frank", &vec![0xaa], "alice")
+        let reserved1 = KeyPackageStore::reserve_key_package_with_timeout(&pool, "frank", &vec![0xaa], "alice", 60)
             .await
             .unwrap()
             .expect("First reservation should succeed");
 
-        let reserved2 = KeyPackageStore::reserve_key_package(&pool, "frank", &vec![0xbb], "bob")
+        let reserved2 = KeyPackageStore::reserve_key_package_with_timeout(&pool, "frank", &vec![0xbb], "bob", 60)
             .await
             .unwrap()
             .expect("Second reservation should succeed");
@@ -799,7 +785,7 @@ mod tests {
         .unwrap();
 
         // Reserve the key
-        let _reserved = KeyPackageStore::reserve_key_package(&pool, "heidi", &group_id, "alice")
+        let _reserved = KeyPackageStore::reserve_key_package_with_timeout(&pool, "heidi", &group_id, "alice", 60)
             .await
             .unwrap()
             .expect("Should reserve");
@@ -819,7 +805,7 @@ mod tests {
             .unwrap();
 
         // Key should be available for reuse
-        let reserved_again = KeyPackageStore::reserve_key_package(&pool, "heidi", &group_id, "bob")
+        let reserved_again = KeyPackageStore::reserve_key_package_with_timeout(&pool, "heidi", &group_id, "bob", 60)
             .await
             .unwrap()
             .expect("Should reserve after timeout");
