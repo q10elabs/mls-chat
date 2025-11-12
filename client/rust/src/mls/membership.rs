@@ -19,7 +19,20 @@
 //! In Phase 3, these will be accessed via a `connection: &'a MlsConnection` field.
 //!
 //! ## Usage Pattern (Phase 2)
-//! ```rust
+//! ```rust,no_run
+//! # use mls_chat_client::mls::membership::MlsMembership;
+//! # use mls_chat_client::mls::user::MlsUser;
+//! # use mls_chat_client::provider::MlsProvider;
+//! # use mls_chat_client::storage::LocalStore;
+//! # use mls_chat_client::api::ServerApi;
+//! # use mls_chat_client::websocket::MessageHandler;
+//! # async fn example() {
+//! # let inviter: &str = unimplemented!();
+//! # let welcome_blob: &str = unimplemented!();
+//! # let ratchet_tree_blob: &str = unimplemented!();
+//! # let user: MlsUser = unimplemented!();
+//! # let provider: MlsProvider = unimplemented!();
+//! # let metadata_store: LocalStore = unimplemented!();
 //! // Created from Welcome message
 //! let membership = MlsMembership::from_welcome_message(
 //!     inviter,
@@ -28,12 +41,12 @@
 //!     &user,
 //!     &provider,
 //!     &metadata_store,
-//! )?;
+//! );
 //!
 //! // Operations require service parameters
-//! membership.send_message(text, &user, &provider, &api, &websocket).await?;
-//! membership.invite_user(invitee, &user, &provider, &api, &store, &websocket)
-//!     .await?;
+//! // membership.send_message(text, &user, &provider, &api, &websocket).await;
+//! // membership.invite_user(invitee, &user, &provider, &api, &store, &websocket).await;
+//! # }
 //! ```
 
 use crate::api::ServerApi;
@@ -66,8 +79,12 @@ use tls_codec::{Deserialize, Serialize as TlsSerialize};
 ///
 /// ## Lifetime Parameter
 /// The `'a` lifetime is prepared for Phase 3 when we add:
-/// ```rust
-/// connection: &'a MlsConnection
+/// ```rust,no_run
+/// # use mls_chat_client::mls::connection::MlsConnection;
+/// # fn example<'a>() {
+/// # let connection: &'a MlsConnection = unimplemented!();
+/// // connection: &'a MlsConnection
+/// # }
 /// ```
 /// In Phase 2, this lifetime is unused but included for forward compatibility.
 pub struct MlsMembership<'a> {
@@ -114,7 +131,17 @@ impl<'a> MlsMembership<'a> {
     /// * Storage errors when saving group ID mapping
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
+    /// # use mls_chat_client::mls::membership::MlsMembership;
+    /// # use mls_chat_client::mls::user::MlsUser;
+    /// # use mls_chat_client::provider::MlsProvider;
+    /// # use mls_chat_client::storage::LocalStore;
+    /// # fn example() -> mls_chat_client::error::Result<()> {
+    /// # let welcome_b64: &str = unimplemented!();
+    /// # let ratchet_tree_b64: &str = unimplemented!();
+    /// # let user: &MlsUser = unimplemented!();
+    /// # let provider: &MlsProvider = unimplemented!();
+    /// # let metadata_store: &LocalStore = unimplemented!();
     /// let membership = MlsMembership::from_welcome_message(
     ///     "alice",
     ///     &welcome_b64,
@@ -123,6 +150,8 @@ impl<'a> MlsMembership<'a> {
     ///     &provider,
     ///     &metadata_store,
     /// )?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn from_welcome_message(
         inviter: &str,
@@ -258,12 +287,17 @@ impl<'a> MlsMembership<'a> {
     /// * Storage access errors
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
+    /// # use mls_chat_client::mls::membership::MlsMembership;
+    /// # fn example() -> mls_chat_client::error::Result<()> {
+    /// # let (user, provider) = unimplemented!();
     /// let membership = MlsMembership::connect_to_existing_group(
     ///     "engineering",
     ///     &user,
     ///     &provider,
     /// )?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn connect_to_existing_group(
         group_name: &str,

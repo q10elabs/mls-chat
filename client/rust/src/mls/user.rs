@@ -15,13 +15,20 @@
 //! - **Single Responsibility**: Only manages identity, not group state or network operations
 //!
 //! ## Usage Pattern
-//! ```rust
+//! ```rust,no_run
+//! # use mls_chat_client::mls::user::MlsUser;
+//! # fn example() {
+//! # let username: String = unimplemented!();
+//! # let identity: mls_chat_client::models::Identity = unimplemented!();
+//! # let signature_key: openmls_basic_credential::SignatureKeyPair = unimplemented!();
+//! # let credential_with_key: openmls::prelude::CredentialWithKey = unimplemented!();
 //! // Created by MlsConnection during initialization
 //! let user = MlsUser::new(username, identity, signature_key, credential_with_key);
 //!
 //! // Passed to memberships for group operations
-//! membership.send_message(text, &user);
-//! membership.invite_user(invitee, &user, provider, api, store, websocket);
+//! // membership.send_message(text, &user);
+//! // membership.invite_user(invitee, &user, provider, api, store, websocket);
+//! # }
 //! ```
 
 use crate::models::Identity;
@@ -80,13 +87,17 @@ impl MlsUser {
     /// * `credential_with_key` - MLS credential (username + public key)
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
+    /// # use mls_chat_client::mls::user::MlsUser;
+    /// # fn example() {
+    /// # let (identity, signature_key, credential_with_key) = unimplemented!();
     /// let user = MlsUser::new(
     ///     "alice".to_string(),
     ///     identity,
     ///     signature_key,
     ///     credential_with_key,
     /// );
+    /// # }
     /// ```
     ///
     /// # Design Note

@@ -17,7 +17,13 @@
 //! - **Multi-Group Support**: HashMap of memberships enables multiple groups per user
 //!
 //! ## Usage Pattern
-//! ```rust
+//! ```rust,no_run
+//! # use std::path::Path;
+//! # use mls_chat_client::mls::connection::MlsConnection;
+//! # async fn example() -> mls_chat_client::error::Result<()> {
+//! # let storage_dir = Path::new("/tmp/storage");
+//! # let url = "http://localhost:4000";
+//! # let username = "alice";
 //! // Create connection
 //! let mut connection = MlsConnection::new_with_storage_path(url, username, storage_dir)?;
 //!
@@ -31,6 +37,8 @@
 //! while let Some(envelope) = connection.next_envelope().await? {
 //!     connection.process_incoming_envelope(envelope).await?;
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::api::{KeyPackageUpload, ServerApi};
@@ -132,12 +140,17 @@ impl MlsConnection {
     /// * Database initialization errors
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
+    /// # use std::path::Path;
+    /// # use mls_chat_client::mls::connection::MlsConnection;
+    /// # fn example() -> mls_chat_client::error::Result<()> {
     /// let connection = MlsConnection::new_with_storage_path(
     ///     "http://localhost:4000",
     ///     "alice",
     ///     Path::new("/tmp/storage"),
     /// )?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new_with_storage_path(
         server_url: &str,
@@ -191,9 +204,19 @@ impl MlsConnection {
     /// * Crypto errors when generating credentials or key packages
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
+    /// # use std::path::Path;
+    /// # use mls_chat_client::mls::connection::MlsConnection;
+    /// # async fn example() -> mls_chat_client::error::Result<()> {
+    /// # let mut connection = MlsConnection::new_with_storage_path(
+    /// #     "http://localhost:4000",
+    /// #     "alice",
+    /// #     Path::new("/tmp/storage"),
+    /// # )?;
     /// connection.initialize().await?;
     /// assert!(connection.get_user().is_some());
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn initialize(&mut self) -> Result<()> {
         log::info!("Initializing MlsConnection for {}", self.username);
@@ -281,9 +304,19 @@ impl MlsConnection {
     /// * Network errors
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
+    /// # use std::path::Path;
+    /// # use mls_chat_client::mls::connection::MlsConnection;
+    /// # async fn example() -> mls_chat_client::error::Result<()> {
+    /// # let mut connection = MlsConnection::new_with_storage_path(
+    /// #     "http://localhost:4000",
+    /// #     "alice",
+    /// #     Path::new("/tmp/storage"),
+    /// # )?;
     /// connection.connect_websocket().await?;
     /// assert!(connection.is_websocket_connected());
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn connect_websocket(&mut self) -> Result<()> {
         log::info!("Connecting WebSocket for {}", self.username);
@@ -309,10 +342,20 @@ impl MlsConnection {
     /// * `Err(_)` - Error receiving message
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
+    /// # use std::path::Path;
+    /// # use mls_chat_client::mls::connection::MlsConnection;
+    /// # async fn example() -> mls_chat_client::error::Result<()> {
+    /// # let mut connection = MlsConnection::new_with_storage_path(
+    /// #     "http://localhost:4000",
+    /// #     "alice",
+    /// #     Path::new("/tmp/storage"),
+    /// # )?;
     /// while let Some(envelope) = connection.next_envelope().await? {
     ///     connection.process_incoming_envelope(envelope).await?;
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn next_envelope(&mut self) -> Result<Option<MlsMessageEnvelope>> {
         if let Some(websocket) = &mut self.websocket {
@@ -378,11 +421,21 @@ impl MlsConnection {
     /// * MLS operation errors
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
+    /// # use std::path::Path;
+    /// # use mls_chat_client::mls::connection::MlsConnection;
+    /// # async fn example() -> mls_chat_client::error::Result<()> {
+    /// # let mut connection = MlsConnection::new_with_storage_path(
+    /// #     "http://localhost:4000",
+    /// #     "alice",
+    /// #     Path::new("/tmp/storage"),
+    /// # )?;
     /// let envelope = connection.next_envelope().await?.unwrap();
     /// if let Some(group_id) = connection.process_incoming_envelope(envelope).await? {
     ///     // Welcome message was processed, update selected group
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn process_incoming_envelope(
         &mut self,

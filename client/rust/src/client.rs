@@ -25,11 +25,20 @@ use std::time::{Duration, SystemTime};
 /// - Provides backward-compatible API for existing code
 ///
 /// ## Usage Pattern
-/// ```rust
+/// ```rust,no_run
+/// # use std::path::Path;
+/// # use mls_chat_client::client::MlsClient;
+/// # async fn example() -> mls_chat_client::error::Result<()> {
+/// # let storage_dir = Path::new("/tmp/storage");
+/// # let url = "http://localhost:4000";
+/// # let username = "alice";
+/// # let group_name = "engineering";
 /// let mut client = MlsClient::new_with_storage_path(url, username, group_name, storage_dir)?;
 /// client.initialize().await?;
-/// client.connect_to_group().await?;
+/// client.connect_to_group(group_name).await?;
 /// client.send_message("Hello").await?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct MlsClient {
     /// MLS connection (infrastructure and memberships)
