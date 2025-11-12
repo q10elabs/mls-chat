@@ -118,7 +118,6 @@ impl KeyPackageStore {
         Ok(())
     }
 
-
     /// Reserve a KeyPackage with a custom timeout (in seconds)
     /// Returns ReservedKeyPackage or None if no available keys
     pub async fn reserve_key_package_with_timeout(
@@ -242,7 +241,6 @@ impl KeyPackageStore {
 
         Ok(())
     }
-
 
     /// Internal helper to release expired reservations (synchronous, optionally filtered by username)
     fn release_expired_reservations_sync(
@@ -716,27 +714,17 @@ mod tests {
         }
 
         // Reserve keys concurrently (simulated)
-        let reserved1 = KeyPackageStore::reserve_key_package_with_timeout(
-            &pool,
-            "frank",
-            &[0xaa],
-            "alice",
-            60,
-        )
-        .await
-        .unwrap()
-        .expect("First reservation should succeed");
+        let reserved1 =
+            KeyPackageStore::reserve_key_package_with_timeout(&pool, "frank", &[0xaa], "alice", 60)
+                .await
+                .unwrap()
+                .expect("First reservation should succeed");
 
-        let reserved2 = KeyPackageStore::reserve_key_package_with_timeout(
-            &pool,
-            "frank",
-            &[0xbb],
-            "bob",
-            60,
-        )
-        .await
-        .unwrap()
-        .expect("Second reservation should succeed");
+        let reserved2 =
+            KeyPackageStore::reserve_key_package_with_timeout(&pool, "frank", &[0xbb], "bob", 60)
+                .await
+                .unwrap()
+                .expect("Second reservation should succeed");
 
         // Verify different keys were reserved
         assert_ne!(reserved1.keypackage_ref, reserved2.keypackage_ref);
