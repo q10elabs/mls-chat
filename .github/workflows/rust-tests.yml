@@ -1,0 +1,109 @@
+name: Rust Tests and Checks
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Server tests
+  server-test:
+    name: Server - Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - run: cargo test --manifest-path server/Cargo.toml
+
+  # Client tests
+  client-test:
+    name: Client - Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/rust
+      - run: cargo test --manifest-path client/rust/Cargo.toml
+
+  # Server clippy
+  server-clippy:
+    name: Server - Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - run: cargo clippy --manifest-path server/Cargo.toml --all-targets -- -D warnings
+
+  # Client clippy
+  client-clippy:
+    name: Client - Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/rust
+      - run: cargo clippy --manifest-path client/rust/Cargo.toml --all-targets -- -D warnings
+
+  # Server format check
+  server-fmt:
+    name: Server - Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --manifest-path server/Cargo.toml -- --check
+
+  # Client format check
+  client-fmt:
+    name: Client - Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --manifest-path client/rust/Cargo.toml -- --check
+
+  # Server build
+  server-build:
+    name: Server - Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - run: cargo build --manifest-path server/Cargo.toml
+
+  # Client build
+  client-build:
+    name: Client - Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/rust
+      - run: cargo build --manifest-path client/rust/Cargo.toml

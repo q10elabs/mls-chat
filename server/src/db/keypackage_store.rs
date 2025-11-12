@@ -46,7 +46,8 @@ impl FromStr for KeyPackageStatus {
     }
 }
 
-/// Metadata for a stored KeyPackage
+/// Metadata for a stored KeyPackage (test-only)
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyPackageMetadata {
     pub keypackage_ref: Vec<u8>,
@@ -57,7 +58,8 @@ pub struct KeyPackageMetadata {
     pub ciphersuite: Option<i64>,
 }
 
-/// Complete KeyPackage data including the serialized bytes
+/// Complete KeyPackage data including the serialized bytes (test-only)
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyPackageData {
     pub keypackage_ref: Vec<u8>,
